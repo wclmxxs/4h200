@@ -136,13 +136,31 @@ for ((slot=0; slot<service_count; slot++)); do
 done
 sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
 
-if [[ ! -x .state/model-venv/bin/python ]]; then
-  python3 -m venv .state/model-venv
-  .state/model-venv/bin/pip install --upgrade pip
-  .state/model-venv/bin/pip install 'huggingface_hub>=0.34,<2' 'hf_xet>=1.1,<2'
+MODEL_VENV_DIR=".state/model-venv"
+MODEL_VENV_PYTHON="${MODEL_VENV_DIR}/bin/python"
+MODEL_VENV_PIP="${MODEL_VENV_DIR}/bin/pip"
+
+if [[ ! -x ${MODEL_VENV_PYTHON} ]]; then
+  python3 -m venv "${MODEL_VENV_DIR}"
 fi
+
+if ! "${MODEL_VENV_PYTHON}" - <<'PY'
+import importlib.util
+import sys
+
+required_modules = ("huggingface_hub", "hf_xet")
+missing = [mod for mod in required_modules if importlib.util.find_spec(mod) is None]
+if missing:
+    sys.exit(1)
+sys.exit(0)
+PY
+then
+  "${MODEL_VENV_PYTHON}" -m pip install --upgrade pip
+  "${MODEL_VENV_PYTHON}" -m pip install 'huggingface_hub>=0.34,<2' 'hf_xet>=1.1,<2'
+fi
+
 lora_local_path=$(
-  HF_TOKEN=${HF_TOKEN:-} .state/model-venv/bin/python scripts/download_lora.py \
+  HF_TOKEN=${HF_TOKEN:-} "${MODEL_VENV_PYTHON}" scripts/download_lora.py \
     --cache-root "${DATA_ROOT}/hf-cache" \
     --repo "${LORA_REPO}" \
     --revision "${LORA_REVISION}" \
