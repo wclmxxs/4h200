@@ -42,6 +42,13 @@ def test_install_migrates_the_previous_balanced_defaults():
     assert "migrate_env_default SOL_CACHE_DIT_WARMUP 2 1" in script
     assert "migrate_env_default SOL_CACHE_DIT_RDT 0.04 0.08" in script
     assert "migrate_env_default SOL_CACHE_DIT_MC 1 2" in script
+    assert (
+        "migrate_env_default SOL_ATTENTION_BACKEND_CONFIG "
+        "dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25 "
+        "dense_backend=sage_attn,dense_steps=0,kv_splits=auto,tau=1.5"
+    ) in script
+    assert "migrate_env_default SOL_CACHE_DIT_RDT 0.08 0.12" in script
+    assert "migrate_env_default SOL_CACHE_DIT_MC 2 3" in script
 
 
 def test_sol_toggle_wrappers_are_one_command_entrypoints():

@@ -80,9 +80,9 @@ git pull --ff-only
 ./install.sh
 ```
 
-安装器会基于 SGLang/Sage 镜像构建独立的 Sol-Attn overlay，并让所有完整的 4 卡分区使用它。全局基础后端设为 Sol，但 `text_encoder`、`audio_vae`、`video_vae` 被显式隔离到兼容后端，只有主 transformer 使用 Sol。每个服务同时传入 `--quantization fp8`，并使用动态 LoRA，避免把 LoRA 增量直接写入量化后的 FP8 基模权重。Cache-DiT 默认参数为 `Fn=1/Bn=0/W=1/R=0.08/MC=2`，面向长视频减少完整计算并允许连续复用两个 step。
+安装器会基于 SGLang/Sage 镜像构建独立的 Sol-Attn overlay，并让所有完整的 4 卡分区使用它。全局基础后端设为 Sol，但 `text_encoder`、`audio_vae`、`video_vae` 被显式隔离到兼容后端，只有主 transformer 使用 Sol。每个服务同时传入 `--quantization fp8`，并使用动态 LoRA，避免把 LoRA 增量直接写入量化后的 FP8 基模权重。Cache-DiT 默认参数为 `Fn=1/Bn=0/W=1/R=0.12/MC=3`，面向长视频采用激进缓存策略并允许连续复用三个 step。
 
-安装脚本会等待全部分区 warmup 完成，然后逐个严格校验 Sol/Cache-DiT/FP8 模块、容器环境、实际 SGLang 进程参数及主 DiT 的 Sol 启动日志；任何一个分区没有真正生效都会退出。当前业务默认 6 NFE，Sol 默认 `dense_steps=1`，首个 step 后进入稀疏路径，并将 `tau` 提高到 `1.25`；Sol 的 SM90 kernel 会按 token shape 专门化，15 秒等不同时间长度的 shape 第一次请求仍可能包含 JIT，稳态测速应对相同参数连续运行两次并取第二次。
+安装脚本会等待全部分区 warmup 完成，然后逐个严格校验 Sol/Cache-DiT/FP8 模块、容器环境、实际 SGLang 进程参数及主 DiT 的 Sol 启动日志；任何一个分区没有真正生效都会退出。当前业务默认 6 NFE，Sol 默认 `dense_steps=0`，所有 step 都进入稀疏路径，并将 `tau` 提高到 `1.5`；Sol 的 SM90 kernel 会按 token shape 专门化，15 秒等不同时间长度的 shape 第一次请求仍可能包含 JIT，稳态测速应对相同参数连续运行两次并取第二次。
 
 三项优化都会改变数值路径，组合收益不保证相加。Cache-DiT 只会在第一条真实生成请求开始时挂载，因此启动阶段只验证配置和依赖，实际命中需要查看首条生成后的 worker 日志。
 
@@ -227,15 +227,15 @@ Content-Type: application/json
 | `COMPONENT_ATTENTION_BACKENDS` | `transformer=sage_attn` | 只把主去噪 transformer 切到 SageAttention |
 | `OPTIMIZATION_STACK_ENABLED` | `1` | 是否给全部 4 卡分区启用 Sol-Attn + FP8 + Cache-DiT |
 | `SOL_COMPONENT_ATTENTION_BACKENDS` | `text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn` | H3 DiT 使用 Sol；显式保护文本编码器及 Audio/Video VAE，避免它们误用 Sol |
-| `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25` | Sol 稀疏配置；6 NFE 下仅首个 step 保持 dense，并提高稀疏度 |
+| `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=0,kv_splits=auto,tau=1.5` | Sol 激进稀疏配置；6 NFE 的全部 step 均进入稀疏路径 |
 | `SOL_ATTN_STRICT` | `1` | 禁止 Sol kernel 异常时静默回退为 dense，避免产生虚假测速结果 |
 | `SOL_WARMUP_STEPS` | `3` | 启动时执行 3 个 warmup step，覆盖 dense 和 sparse 两种 kernel 路径 |
 | `SOL_QUANTIZATION` | `fp8` | 全部推理分区在线量化主 transformer |
 | `SOL_LORA_MERGE_MODE` | `dynamic` | 动态应用 Turbo LoRA，不修改量化基模权重 |
 | `SOL_CACHE_DIT_ENABLED` | `true` | 全部推理分区进程级启用 Cache-DiT |
 | `SOL_CACHE_DIT_WARMUP` | `1` | 仅首个去噪 step 强制完整计算 |
-| `SOL_CACHE_DIT_RDT` | `0.08` | 残差差异缓存阈值；相较旧值允许更多复用 |
-| `SOL_CACHE_DIT_MC` | `2` | 最多连续缓存 2 个 step |
+| `SOL_CACHE_DIT_RDT` | `0.12` | 激进残差差异缓存阈值，允许更多复用 |
+| `SOL_CACHE_DIT_MC` | `3` | 最多连续缓存 3 个 step |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
