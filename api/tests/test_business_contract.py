@@ -30,6 +30,27 @@ def test_business_nfe_is_translated_to_sglang_sigma_grid():
     }
 
 
+def test_query_returns_resolved_seed_for_reproduction():
+    task = business.task_payload(
+        {
+            "id": "video_123",
+            "status": "completed",
+            "created_at": 1,
+            "completed_at": 2,
+            "_deployment": {
+                "request": {"seed": 987654321},
+                "business": {
+                    "resolution": "768P",
+                    "duration": 5,
+                    "ratio": "16:9",
+                },
+            },
+        }
+    )
+
+    assert task["seed"] == 987654321
+
+
 def test_fl2va_preserves_first_and_last_frame_order():
     value = request(
         content=[

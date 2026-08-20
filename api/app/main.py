@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import time
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ COMPONENT_ATTENTION_BACKENDS = os.getenv(
 )
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "60"))
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,200}")
+SEED_UPPER_BOUND = 1 << 63
 
 
 def validate_task_id(task_id: str) -> str:
@@ -66,6 +68,13 @@ def load_metadata(task_id: str) -> dict[str, Any] | None:
         return None
 
 
+def with_resolved_seed(payload: dict[str, Any]) -> dict[str, Any]:
+    resolved = dict(payload)
+    if resolved.get("seed") is None:
+        resolved["seed"] = secrets.randbelow(SEED_UPPER_BOUND)
+    return resolved
+
+
 def upstream_detail(response: httpx.Response) -> str:
     try:
         payload = response.json()
@@ -92,6 +101,7 @@ def raise_upstream(response: httpx.Response) -> None:
 async def submit_upstream(
     payload: dict[str, Any], business: dict[str, Any] | None = None
 ) -> dict[str, Any]:
+    payload = with_resolved_seed(payload)
     try:
         async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
             response = await client.post(f"{SGLANG_URL}/v1/videos", json=payload)

@@ -241,6 +241,7 @@ def business_metadata(request: GenerationRequest) -> dict[str, Any]:
 def task_payload(job: dict[str, Any]) -> dict[str, Any]:
     deployment = job.get("_deployment") or {}
     business = deployment.get("business") or {}
+    upstream_request = deployment.get("request") or {}
     status = {
         "queued": "queued",
         "in_progress": "running",
@@ -267,6 +268,8 @@ def task_payload(job: dict[str, Any]) -> dict[str, Any]:
         "task_type": "generation",
         "modality": "video",
     }
+    if upstream_request.get("seed") is not None:
+        task["seed"] = int(upstream_request["seed"])
     if status == "succeeded":
         task["content"] = {
             "url": f"{PUBLIC_BASE_URL}/ic/capcut/edit_gateway/v2/video_generation/{job['id']}/content"
