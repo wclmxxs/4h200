@@ -5,6 +5,26 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "${ROOT}"
 mkdir -p .state .generated
 
+from_ami=false
+case ${1:-} in
+  "") ;;
+  --from-ami) from_ami=true ;;
+  -h|--help)
+    echo "Usage: $0 [--from-ami]"
+    echo "  --from-ami  Reuse baked images/cache while refreshing identity and GPU warmup."
+    exit 0
+    ;;
+  *)
+    echo "unknown argument: $1" >&2
+    echo "Usage: $0 [--from-ami]" >&2
+    exit 2
+    ;;
+esac
+if (( $# > 1 )); then
+  echo "Usage: $0 [--from-ami]" >&2
+  exit 2
+fi
+
 if [[ ! -f .env ]]; then
   cp config/env.example .env
 fi
@@ -35,12 +55,31 @@ migrate_env_default() {
 }
 
 sudo -v
-sudo scripts/bootstrap_host.sh
+# A cloned AMI can auto-start the baked reporter with the source node's
+# identity. Stop it before any host/bootstrap work, then again after Docker is
+# started because bootstrap may restart the daemon.
+sudo docker stop minimax-h3-h200-reporter >/dev/null 2>&1 || true
+if [[ ${from_ami} == true ]]; then
+  echo "AMI fast path: validating baked host runtime"
+  for command in curl jq openssl python3 flock findmnt nvidia-smi docker systemctl; do
+    command -v "${command}" >/dev/null 2>&1 || {
+      echo "AMI fast path requires ${command}; run ./install.sh once to repair the host" >&2
+      exit 1
+    }
+  done
+  nvidia-smi -L >/dev/null
+  sudo systemctl enable --now docker >/dev/null
+  sudo docker info >/dev/null
+  sudo docker compose version
+else
+  sudo scripts/bootstrap_host.sh
+fi
 exec 9>.state/install.lock
 if ! flock -n 9; then
   echo "another install.sh process is running" >&2
   exit 1
 fi
+sudo docker stop minimax-h3-h200-reporter >/dev/null 2>&1 || true
 
 if [[ -z $(sed -n 's/^API_KEY=//p' .env) ]]; then
   set_env API_KEY "$(openssl rand -hex 32)"
@@ -70,23 +109,36 @@ raise SystemExit(0 if address.version == 4 and address.is_global else 1)
 PY
 }
 
-advertise_host=$(sed -n 's/^ADVERTISE_HOST=//p' .env)
-if [[ -z ${advertise_host} ]]; then
-  advertise_host=$(detect_imds public-ipv4 || true)
+configured_advertise_host=$(sed -n 's/^ADVERTISE_HOST=//p' .env)
+detected_advertise_host=$(detect_imds public-ipv4 || true)
+if [[ -n ${detected_advertise_host} ]]; then
+  advertise_host=${detected_advertise_host}
+  if [[ ${configured_advertise_host} != "${advertise_host}" ]]; then
+    echo "Refreshing ADVERTISE_HOST from AWS IMDS: ${configured_advertise_host:-<empty>} -> ${advertise_host}"
+  fi
+  set_env ADVERTISE_HOST "${advertise_host}"
+else
+  advertise_host=${configured_advertise_host}
   [[ -n ${advertise_host} ]] || {
     echo "AWS IMDSv2 did not return public-ipv4; set ADVERTISE_HOST to this node's public IPv4" >&2
     exit 1
   }
-  set_env ADVERTISE_HOST "${advertise_host}"
 fi
 if ! require_public_ipv4 "${advertise_host}"; then
   echo "ADVERTISE_HOST must be a public IPv4 address; got ${advertise_host}" >&2
   exit 1
 fi
 
-instance_id=$(sed -n 's/^INSTANCE_ID=//p' .env)
-if [[ -z ${instance_id} ]]; then
-  instance_id=$(detect_imds instance-id || hostname)
+configured_instance_id=$(sed -n 's/^INSTANCE_ID=//p' .env)
+detected_instance_id=$(detect_imds instance-id || true)
+if [[ -n ${detected_instance_id} ]]; then
+  instance_id=${detected_instance_id}
+  if [[ ${configured_instance_id} != "${instance_id}" ]]; then
+    echo "Refreshing INSTANCE_ID from AWS IMDS: ${configured_instance_id:-<empty>} -> ${instance_id}"
+  fi
+  set_env INSTANCE_ID "${instance_id}"
+else
+  instance_id=${configured_instance_id:-$(hostname)}
   [[ -n ${instance_id} ]] || { echo "unable to determine INSTANCE_ID" >&2; exit 1; }
   set_env INSTANCE_ID "${instance_id}"
 fi
@@ -95,9 +147,11 @@ set_env HOST_UID "$(id -u)"
 set_env HOST_GID "$(id -g)"
 set_env_default VIDEO_RETENTION_HOURS 12
 set_env_default CLEANUP_INTERVAL_SECONDS 600
+set_env_default MODEL_CACHE_ROOT ""
 set_env_default SAGEATTENTION_REVISION d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
 set_env_default ATTENTION_BACKEND fa
 set_env_default COMPONENT_ATTENTION_BACKENDS transformer=sage_attn
+set_env_default LORA_SIZE 779849816
 migrate_env_default ATTENTION_BACKEND sage_attn fa
 migrate_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa transformer=sage_attn
 migrate_env_default RELEASE_ID h3-4h200-20260819-v1 h3-4h200-20260820-v2
@@ -108,11 +162,18 @@ migrate_env_default RELEASE_ID h3-4h200-20260820-v2 h3-4h200-20260820-v3
 migrate_env_default SGLANG_IMAGE minimax-h3-h200-sglang:20260820-v2 minimax-h3-h200-sglang:20260820-v3
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v2 minimax-h3-h200-api:20260820-v3
 migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260820-v2 minimax-h3-h200-reporter:20260820-v3
+migrate_env_default RELEASE_ID h3-4h200-20260820-v3 h3-4h200-20260820-v4
+migrate_env_default SGLANG_IMAGE minimax-h3-h200-sglang:20260820-v3 minimax-h3-h200-sglang:20260820-v4
+migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v3 minimax-h3-h200-api:20260820-v4
+migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260820-v3 minimax-h3-h200-reporter:20260820-v4
 
 set -a
 # shellcheck disable=SC1091
 source .env
 set +a
+
+MODEL_CACHE_ROOT=${MODEL_CACHE_ROOT:-${DATA_ROOT}/hf-cache}
+export MODEL_CACHE_ROOT
 
 if [[ ${SERVICE_ID} != "Minimax-H3-AWS-H200" ]]; then
   echo "SERVICE_ID must be Minimax-H3-AWS-H200; got ${SERVICE_ID}" >&2
@@ -136,11 +197,28 @@ fi
 
 echo "Detected ${gpu_count} GPUs: ${service_count} x 4-H200 service(s) on ${INSTANCE_ID} (${ADVERTISE_HOST})"
 
-sudo mkdir -p "${DATA_ROOT}/hf-cache" "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner"
+sudo mkdir -p "${MODEL_CACHE_ROOT}" "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner"
 for ((slot=0; slot<service_count; slot++)); do
   sudo mkdir -p "${DATA_ROOT}/slots/${slot}/output" "${DATA_ROOT}/slots/${slot}/api-data"
 done
-sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
+sudo chown "$(id -u):$(id -g)" "${DATA_ROOT}" "${MODEL_CACHE_ROOT}"
+sudo chown -R "$(id -u):$(id -g)" \
+  "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner" "${DATA_ROOT}/slots"
+if [[ ! -w ${MODEL_CACHE_ROOT} ]]; then
+  echo "Model cache ownership differs from this user; repairing ${MODEL_CACHE_ROOT}"
+  sudo chown -R "$(id -u):$(id -g)" "${MODEL_CACHE_ROOT}"
+fi
+
+if [[ ${from_ami} == true ]]; then
+  cache_source=$(findmnt -n -o SOURCE -T "${MODEL_CACHE_ROOT}" 2>/dev/null || true)
+  if [[ ${MODEL_CACHE_ROOT} == /opt/dlami/nvme/* || ${cache_source} == *ephemeral* ]]; then
+    echo "WARNING: MODEL_CACHE_ROOT=${MODEL_CACHE_ROOT} is on instance-store NVMe (${cache_source:-unknown})."
+    echo "WARNING: standard EC2 AMIs do not preserve this cache; use snapshot-backed EBS for fast cloned starts."
+  fi
+  if [[ ! -d ${MODEL_CACHE_ROOT}/hub/models--MiniMaxAI--MiniMax-H3 ]]; then
+    echo "AMI fast path: MiniMax-H3 base-model cache is missing; SGLang will download it during startup."
+  fi
+fi
 
 MODEL_VENV_DIR=".state/model-venv"
 MODEL_VENV_PYTHON="${MODEL_VENV_DIR}/bin/python"
@@ -178,28 +256,43 @@ then
 fi
 
 lora_local_path=$(
-  HF_TOKEN=${HF_TOKEN:-} "${MODEL_VENV_PYTHON}" scripts/download_lora.py \
-    --cache-root "${DATA_ROOT}/hf-cache" \
-    --repo "${LORA_REPO}" \
-    --revision "${LORA_REVISION}" \
-    --filename "${LORA_WEIGHT}" \
+  lora_args=(
+    --cache-root "${MODEL_CACHE_ROOT}"
+    --repo "${LORA_REPO}"
+    --revision "${LORA_REVISION}"
+    --filename "${LORA_WEIGHT}"
     --sha256 "${LORA_SHA256}"
+    --size "${LORA_SIZE}"
+  )
+  if [[ ${from_ami} == true ]]; then
+    lora_args+=(--trust-existing-size)
+  fi
+  HF_TOKEN=${HF_TOKEN:-} "${MODEL_VENV_PYTHON}" scripts/download_lora.py "${lora_args[@]}"
 )
 set_env LORA_LOCAL_PATH "${lora_local_path}"
 export LORA_LOCAL_PATH="${lora_local_path}"
 
 docker_cmd=(sudo docker)
-"${docker_cmd[@]}" build --progress=plain \
+build_image() {
+  local dockerfile=$1 image=$2
+  shift 2
+  if [[ ${from_ami} == true ]] \
+    && "${docker_cmd[@]}" image inspect "${image}" >/dev/null 2>&1; then
+    echo "AMI fast path: reusing Docker image ${image}"
+    return
+  fi
+  "${docker_cmd[@]}" build --progress=plain "$@" \
+    -f "${dockerfile}" -t "${image}" .
+}
+build_image docker/Dockerfile.sglang "${SGLANG_IMAGE}" \
   --build-arg "SGLANG_BASE_IMAGE=${SGLANG_BASE_IMAGE}" \
-  --build-arg "SAGEATTENTION_REVISION=${SAGEATTENTION_REVISION:-d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4}" \
-  -f docker/Dockerfile.sglang -t "${SGLANG_IMAGE}" .
-"${docker_cmd[@]}" build --progress=plain \
-  -f docker/Dockerfile.api -t "${API_IMAGE}" .
-"${docker_cmd[@]}" build --progress=plain \
-  -f docker/Dockerfile.reporter -t "${REPORTER_IMAGE}" .
+  --build-arg "SAGEATTENTION_REVISION=${SAGEATTENTION_REVISION:-d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4}"
+build_image docker/Dockerfile.api "${API_IMAGE}"
+build_image docker/Dockerfile.reporter "${REPORTER_IMAGE}"
 
 generate_args=(
   --data-root "${DATA_ROOT}"
+  --model-cache-root "${MODEL_CACHE_ROOT}"
   --advertise-host "${ADVERTISE_HOST}"
   --instance-id "${INSTANCE_ID}"
   --base-port "${API_BASE_PORT}"
@@ -217,42 +310,86 @@ compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
 "${compose[@]}" up -d h3-cleaner
 
 startup_timeout=${STARTUP_TIMEOUT_SECONDS:-1800}
-for ((slot=0; slot<service_count; slot++)); do
-  echo "Starting 4-H200 partition ${slot}..."
-  "${compose[@]}" up -d "h3-sglang-${slot}"
-  deadline=$((SECONDS + startup_timeout))
-  worker_healthy=false
+progress_interval=${STARTUP_PROGRESS_SECONDS:-15}
+
+wait_for_worker() {
+  local slot=$1
+  local container="minimax-h3-h200-sglang-${slot}"
+  local deadline=$((SECONDS + startup_timeout))
+  local next_report=$SECONDS
+  local initial_restarts current_restarts state health snapshot
+
+  initial_restarts=$(sudo docker inspect -f '{{.RestartCount}}' "${container}" 2>/dev/null || echo 0)
   while (( SECONDS < deadline )); do
-    health=$(sudo docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-      "minimax-h3-h200-sglang-${slot}" 2>/dev/null || true)
+    snapshot=$(sudo docker inspect \
+      -f '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}|{{.RestartCount}}' \
+      "${container}" 2>/dev/null || true)
+    IFS='|' read -r state health current_restarts <<<"${snapshot:-missing|none|0}"
     if [[ ${health} == healthy ]]; then
-      worker_healthy=true
-      break
+      echo "4-H200 partition ${slot} is healthy after $((startup_timeout - deadline + SECONDS))s"
+      return 0
     fi
-    if [[ ${health} == unhealthy ]]; then
-      break
+    if [[ ${state} == exited || ${state} == dead || ${health} == unhealthy ]] \
+      || (( current_restarts >= initial_restarts + 3 )); then
+      echo "4-H200 partition ${slot} failed: state=${state} health=${health} restarts=${current_restarts}" >&2
+      return 1
+    fi
+    if (( SECONDS >= next_report )); then
+      echo "Waiting for partition ${slot}: state=${state} health=${health} restarts=${current_restarts} elapsed=$((startup_timeout - deadline + SECONDS))s"
+      sudo docker logs --tail 2 "${container}" 2>&1 \
+        | sed "s/^/[partition ${slot}] /" || true
+      next_report=$((SECONDS + progress_interval))
     fi
     sleep 5
   done
-  if [[ ${worker_healthy} != true ]]; then
+  echo "4-H200 partition ${slot} timed out after ${startup_timeout}s" >&2
+  return 1
+}
+
+wait_for_api() {
+  local slot=$1
+  local port=$((API_BASE_PORT + slot))
+  local deadline=$((SECONDS + 180))
+  local next_report=$SECONDS
+  while (( SECONDS < deadline )); do
+    if curl -fsS "http://127.0.0.1:${port}/healthz" \
+      -H "Authorization: Bearer ${API_KEY}" \
+      | jq -e '.ok == true' >/dev/null 2>&1; then
+      echo "API partition ${slot} is healthy on port ${port}"
+      return 0
+    fi
+    if (( SECONDS >= next_report )); then
+      echo "Waiting for API partition ${slot} on port ${port}..."
+      next_report=$((SECONDS + progress_interval))
+    fi
+    sleep 3
+  done
+  return 1
+}
+
+worker_services=()
+for ((slot=0; slot<service_count; slot++)); do
+  worker_services+=("h3-sglang-${slot}")
+done
+echo "Starting ${service_count} x 4-H200 partitions in parallel..."
+"${compose[@]}" up -d "${worker_services[@]}"
+
+for ((slot=0; slot<service_count; slot++)); do
+  if ! wait_for_worker "${slot}"; then
     "${compose[@]}" logs --tail 300 "h3-sglang-${slot}"
     echo "SGLang partition ${slot} did not become healthy" >&2
     exit 1
   fi
+done
 
-  "${compose[@]}" up -d "h3-api-${slot}"
-  port=$((API_BASE_PORT + slot))
-  api_healthy=false
-  deadline=$((SECONDS + 180))
-  while (( SECONDS < deadline )); do
-    if curl -fsS "http://127.0.0.1:${port}/healthz" \
-      -H "Authorization: Bearer ${API_KEY}" | jq -e '.ok == true' >/dev/null 2>&1; then
-      api_healthy=true
-      break
-    fi
-    sleep 3
-  done
-  if [[ ${api_healthy} != true ]]; then
+api_services=()
+for ((slot=0; slot<service_count; slot++)); do
+  api_services+=("h3-api-${slot}")
+done
+"${compose[@]}" up -d "${api_services[@]}"
+
+for ((slot=0; slot<service_count; slot++)); do
+  if ! wait_for_api "${slot}"; then
     "${compose[@]}" logs --tail 200 "h3-api-${slot}"
     echo "API partition ${slot} did not become healthy" >&2
     exit 1

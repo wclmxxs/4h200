@@ -55,6 +55,10 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
             "generate_compose.py",
             "--output-dir",
             str(tmp_path),
+            "--data-root",
+            "/srv/h3-data",
+            "--model-cache-root",
+            "/mnt/model-ebs/hf-cache",
             "--advertise-host",
             "16.78.214.130",
             "--instance-id",
@@ -85,6 +89,10 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
     ]["devices"]
     assert reservations[0]["device_ids"] == ["4", "5", "6", "7"]
     assert compose["services"]["h3-api-1"]["ports"] == ["0.0.0.0:30011:30010"]
+    assert (
+        "/mnt/model-ebs/hf-cache:/cache/huggingface"
+        in compose["services"]["h3-sglang-0"]["volumes"]
+    )
     assert compose["services"]["h3-cleaner"]["environment"] == {
         "CLEANUP_ROOT": "/slots",
         "CLEANUP_STATE": "/state/status.json",

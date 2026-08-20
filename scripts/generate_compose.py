@@ -126,7 +126,10 @@ exec "$${args[@]}"
 
 
 def sglang_service(
-    group_index: int, group: list[dict[str, object]], data_root: str
+    group_index: int,
+    group: list[dict[str, object]],
+    data_root: str,
+    model_cache_root: str,
 ) -> list[str]:
     indexes = [int(gpu["index"]) for gpu in group]
     slot = f"{data_root}/slots/{group_index}"
@@ -146,7 +149,7 @@ def sglang_service(
         "      HF_HUB_CACHE: /cache/huggingface/hub",
         "      SGLANG_MINIMAX_H3_EXTRA_SHORT_EDGES: ${SHORT_EDGES:-480,704}",
         "    volumes:",
-        f"      - {data_root}/hf-cache:/cache/huggingface",
+        f"      - {model_cache_root}:/cache/huggingface",
         f"      - {slot}/output:/out/videos",
         "    healthcheck:",
         "      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:30020/health >/dev/null']",
@@ -238,6 +241,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", default=".generated")
     parser.add_argument("--data-root", default="/srv/minimax-h3-h200")
+    parser.add_argument("--model-cache-root", default="")
     parser.add_argument("--advertise-host", required=True)
     parser.add_argument("--instance-id", required=True)
     parser.add_argument("--base-port", type=int, default=30010)
@@ -246,6 +250,8 @@ def main() -> None:
     parser.add_argument("--api-image", default=os.getenv("API_IMAGE", ""))
     parser.add_argument("--allow-non-h200", action="store_true")
     args = parser.parse_args()
+    if not args.model_cache_root:
+        args.model_cache_root = f"{args.data_root}/hf-cache"
 
     repo_root = Path(__file__).resolve().parents[1]
     output_dir = Path(args.output_dir)
@@ -258,7 +264,9 @@ def main() -> None:
 
     compose = ["name: minimax-h3-4h200", "", "services:"]
     for group_index, group in enumerate(groups):
-        compose.extend(sglang_service(group_index, group, args.data_root))
+        compose.extend(
+            sglang_service(group_index, group, args.data_root, args.model_cache_root)
+        )
         compose.append("")
         compose.extend(
             api_service(

@@ -19,7 +19,7 @@
 - 业务侧 NFE 支持 `4/6/8`，默认 `6`；转发给 SGLang 时分别是 `5/7/9` 个 sigma grid points。
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
-- 每个 4 卡分区独立排队、独立故障、独立端口和独立注册健康状态。
+- 每个 4 卡分区独立排队、独立故障、独立端口和独立注册健康状态；启动时所有完整分区并行加载和预热。
 - 图片 URL 默认只允许公网解析地址或 `.byted.org`，避免推理容器访问云元数据和内网地址。
 - 生成视频和对应任务元数据保留 12 小时；独立 cleaner 每 10 分钟清理一次，不触碰模型与 LoRA 缓存。
 
@@ -33,9 +33,27 @@ cd 4h200
 ./install.sh
 ```
 
+从已经完整部署并验证过的 EC2 AMI 创建新实例时，使用快速启动模式：
+
+```bash
+./install.sh --from-ami
+```
+
+快速模式会立即停止镜像中自动启动的旧 Reporter，强制从 AWS IMDS 刷新公网 IP 和 instance-id，复用已有 Docker 镜像，并对已缓存且大小匹配的 LoRA 跳过 SHA256。它仍会重新生成 Compose、把模型加载到所有 GPU、执行 SGLang warmup，最后以新身份注册。GPU 显存状态无法保存在 AMI 中，因此模型加载和 warmup 不能跳过。
+
+制作 AMI 前先执行一次冻结脚本。它会先停 Reporter，再停止全部部署容器，但保留 Docker 镜像、模型缓存和视频数据。这样克隆机开机时不会让旧 Reporter 抢先用源机器身份注册：
+
+```bash
+./prepare_ami.sh
+```
+
+脚本输出 `AMI_READY` 后再创建 AMI。克隆机仍然只需要 `git pull --ff-only && ./install.sh --from-ami`；如果不创建 AMI 而要恢复源机器，也执行同一条快速安装命令。
+
 默认不需要编辑配置。只有非标准环境才需要先运行 `cp config/env.example .env` 再修改，例如无法访问 AWS IMDS、需要 Hugging Face Token，或需要更换数据盘目录。
 
-`ADVERTISE_HOST` 不接受私网 IP、域名或回退地址：默认仅查询 AWS IMDSv2 的 `public-ipv4`，查不到就终止部署并提示显式填写公网 IPv4。这个值同时用于 ReportCatalog 的 `host` 和成功任务的下载 URL。安装过程会按固定 revision 下载 Turbo LoRA、校验 SHA256，再把本地 snapshot 路径交给 SGLang；重复安装复用缓存。
+`ADVERTISE_HOST` 不接受私网 IP、域名或回退地址。每次安装都会优先查询 AWS IMDSv2 的 `public-ipv4` 和 `instance-id` 并覆盖 AMI 中遗留的旧值；IMDS 不可用时才使用 `.env` 的手工配置。公网 IP 同时用于 ReportCatalog 的 `host` 和成功任务的下载 URL。普通安装按固定 revision 下载 Turbo LoRA 并校验 SHA256；AMI 快速模式只对镜像中已经存在、大小匹配的 LoRA 跳过哈希。
+
+默认模型缓存位于 `${DATA_ROOT}/hf-cache`。默认 `DATA_ROOT=/opt/dlami/nvme/minimax-h3-4h200` 通常属于 EC2 instance-store，不会被标准 AMI 保存。要让克隆实例真正复用基模，制作 AMI 前应把 `MODEL_CACHE_ROOT` 指向快照支持的 EBS 文件系统；快速模式检测到临时 NVMe 时会明确告警，缓存缺失时 SGLang 仍会自动重新下载模型。
 
 常用操作：
 
@@ -178,6 +196,9 @@ Content-Type: application/json
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
 | `DATA_ROOT` | `/opt/dlami/nvme/minimax-h3-4h200` | 与 RTX6000PRO 仓完全分离 |
+| `MODEL_CACHE_ROOT` | 空（解析为 `${DATA_ROOT}/hf-cache`） | Hugging Face 基模和 LoRA 缓存；AMI 复用时应指向 EBS |
+| `STARTUP_TIMEOUT_SECONDS` | `1800` | 每个 SGLang 分区等待加载和 warmup 的最长秒数 |
+| `STARTUP_PROGRESS_SECONDS` | `15` | 等待模型加载和 warmup 时输出一次进度的间隔 |
 | `SGLANG_BASE_IMAGE` | `lmsysorg/sglang:dev` | 建议验证后换成 digest 固定的镜像引用 |
 
 如果 SGLang 上游代码结构变化，构建阶段会因短边补丁不匹配而失败，不会静默启动一个只支持 768 的服务。
@@ -196,6 +217,6 @@ sed -i 's/^COMPONENT_ATTENTION_BACKENDS=.*/COMPONENT_ATTENTION_BACKENDS=/' .env
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest
-bash -n install.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh
+bash -n install.sh prepare_ami.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh
 python3 -m py_compile api/app/*.py reporter/main.py scripts/generate_compose.py
 ```

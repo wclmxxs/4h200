@@ -21,6 +21,12 @@ def main() -> None:
     parser.add_argument("--revision", required=True)
     parser.add_argument("--filename", required=True)
     parser.add_argument("--sha256", required=True)
+    parser.add_argument("--size", required=True, type=int)
+    parser.add_argument(
+        "--trust-existing-size",
+        action="store_true",
+        help="accept a cached file with the locked size without recomputing SHA256",
+    )
     args = parser.parse_args()
 
     from huggingface_hub import hf_hub_download
@@ -28,14 +34,29 @@ def main() -> None:
     cache_root = Path(args.cache_root).resolve()
     hub_cache = cache_root / "hub"
     hub_cache.mkdir(parents=True, exist_ok=True)
-    downloaded = Path(
-        hf_hub_download(
-            repo_id=args.repo,
-            revision=args.revision,
-            filename=args.filename,
-            cache_dir=hub_cache,
+    download_kwargs = {
+        "repo_id": args.repo,
+        "revision": args.revision,
+        "filename": args.filename,
+        "cache_dir": hub_cache,
+    }
+    downloaded = None
+    if args.trust_existing_size:
+        try:
+            cached = Path(hf_hub_download(**download_kwargs, local_files_only=True))
+        except Exception:  # noqa: BLE001 - a cache miss falls through to download
+            cached = None
+        if cached is not None and cached.stat().st_size == args.size:
+            relative = cached.relative_to(cache_root)
+            print(Path("/cache/huggingface") / relative)
+            return
+
+    downloaded = Path(hf_hub_download(**download_kwargs))
+    if downloaded.stat().st_size != args.size:
+        raise SystemExit(
+            f"LoRA size mismatch for {downloaded}: expected {args.size}, "
+            f"got {downloaded.stat().st_size}"
         )
-    )
     actual = sha256_file(downloaded)
     if actual != args.sha256:
         raise SystemExit(
