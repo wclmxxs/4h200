@@ -1,0 +1,14 @@
+ARG SGLANG_BASE_IMAGE=lmsysorg/sglang:dev
+FROM ${SGLANG_BASE_IMAGE}
+
+COPY patches/minimax-h3-short-edge.patch /tmp/minimax-h3-short-edge.patch
+RUN cd /sgl-workspace/sglang \
+    && if git apply -p1 --check /tmp/minimax-h3-short-edge.patch; then \
+         git apply -p1 /tmp/minimax-h3-short-edge.patch; \
+       elif git apply -p1 --reverse --check /tmp/minimax-h3-short-edge.patch; then \
+         echo 'MiniMax H3 short-edge patch is already present'; \
+       else \
+         echo 'MiniMax H3 short-edge patch does not match this SGLang image; pin SGLANG_BASE_IMAGE to a validated build' >&2; \
+         exit 1; \
+       fi \
+    && rm /tmp/minimax-h3-short-edge.patch

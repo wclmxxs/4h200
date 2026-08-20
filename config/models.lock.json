@@ -1,0 +1,19 @@
+{
+  "base_model": {
+    "repo": "MiniMaxAI/MiniMax-H3",
+    "variant": "fl2va"
+  },
+  "turbo_lora": {
+    "repo": "larryvrh/MiniMax-H3-Turbo-Lora",
+    "revision": "43a74557ac3f6539db8e0f2a959d03feb7a81480",
+    "filename": "minimax_h3_turbo_v4_step600_ema.safetensors",
+    "sha256": "5f3a626cd72c93a8b9318d6760c510bc5092d2ab13aaba1f932c5bab07a416d3",
+    "size": 779849816,
+    "nickname": "h3-turbo-v4",
+    "scale": 1.0,
+    "merge_mode": "auto"
+  },
+  "business_nfe": [4, 6, 8],
+  "default_business_nfe": 6,
+  "sglang_sigma_grid_offset": 1
+}

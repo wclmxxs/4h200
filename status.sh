@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "${ROOT}"
+
+if [[ ! -f .env || ! -f .generated/compose.yaml || ! -f .generated/instances.json ]]; then
+  echo "not installed: run ./install.sh first" >&2
+  exit 1
+fi
+
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
+service_count=$(jq '.instances | length' .generated/instances.json)
+
+echo "=== containers ==="
+"${compose[@]}" ps
+
+echo "=== GPUs ==="
+nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu \
+  --format=csv,noheader
+
+echo "=== 4-H200 partitions ==="
+for ((slot=0; slot<service_count; slot++)); do
+  port=$((API_BASE_PORT + slot))
+  printf 'slot=%d port=%d ' "${slot}" "${port}"
+  if ! curl -fsS --max-time 10 \
+      -H "Authorization: Bearer ${API_KEY}" \
+      "http://127.0.0.1:${port}/healthz" |
+      jq -c '{ok,healthy_workers,gpu_indexes,gpu_uuids,deployment}'; then
+    echo '{"ok":false,"error":"health request failed"}'
+  fi
+done
+
+echo "=== registration ==="
+if [[ -f ${DATA_ROOT}/reporter/status.json ]]; then
+  jq . "${DATA_ROOT}/reporter/status.json"
+else
+  echo "reporter has not written status yet"
+fi
