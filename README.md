@@ -15,7 +15,7 @@
 
 - SGLang `fl2va` variant，同时支持 T2V、首帧、尾帧和首尾帧生成。
 - 静态加载 `larryvrh/MiniMax-H3-Turbo-Lora` 当前 v4 权重。
-- 默认启用 SageAttention，并固定包含 Hopper/SM90 修复的 upstream revision；text encoder 保持 `torch_sdpa`。
+- 主去噪 `transformer` 默认启用 SageAttention，并固定包含 Hopper/SM90 修复的 upstream revision；Audio/Video VAE 等其他组件保持兼容的 FlashAttention。
 - 业务侧 NFE 支持 `4/6/8`，默认 `6`；转发给 SGLang 时分别是 `5/7/9` 个 sigma grid points。
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
@@ -172,8 +172,8 @@ Content-Type: application/json
 | `DEFAULT_NFE` | `6` | 业务接口默认实际去噪次数 |
 | `SHORT_EDGES` | `480,704` | 在官方 768 之外额外启用的短边 |
 | `WARMUP` | `864x480 1248x704 1344x768` | SGLang 启动预热规格 |
-| `ATTENTION_BACKEND` | `sage_attn` | 默认 DiT attention；设为 `fa` 或 `auto` 可回退 |
-| `COMPONENT_ATTENTION_BACKENDS` | `text_encoder=torch_sdpa` | Sage 模式下保持编码器兼容路径 |
+| `ATTENTION_BACKEND` | `fa` | 所有组件的安全基础后端，避免 Audio/Video VAE 使用不支持的 SageAttention |
+| `COMPONENT_ATTENTION_BACKENDS` | `transformer=sage_attn` | 只把主去噪 transformer 切到 SageAttention |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
@@ -182,10 +182,11 @@ Content-Type: application/json
 
 如果 SGLang 上游代码结构变化，构建阶段会因短边补丁不匹配而失败，不会静默启动一个只支持 768 的服务。
 
-SageAttention 会改变 attention 数值路径。需要回退 FlashAttention 时修改 `.env` 后重新执行安装：
+SageAttention 会改变 transformer 的 attention 数值路径。需要让所有组件回退到 FlashAttention 时清空组件覆盖后重新执行安装：
 
 ```bash
 sed -i 's/^ATTENTION_BACKEND=.*/ATTENTION_BACKEND=fa/' .env
+sed -i 's/^COMPONENT_ATTENTION_BACKENDS=.*/COMPONENT_ATTENTION_BACKENDS=/' .env
 ./install.sh
 ```
 

@@ -30,9 +30,9 @@ LORA_REVISION = os.getenv("LORA_REVISION", "")
 LORA_WEIGHT = os.getenv("LORA_WEIGHT", "minimax_h3_turbo_v4_step600_ema.safetensors")
 LORA_NICKNAME = os.getenv("LORA_NICKNAME", "h3-turbo-v4")
 LORA_SCALE = float(os.getenv("LORA_SCALE", "1.0"))
-ATTENTION_BACKEND = os.getenv("ATTENTION_BACKEND", "sage_attn")
+ATTENTION_BACKEND = os.getenv("ATTENTION_BACKEND", "fa")
 COMPONENT_ATTENTION_BACKENDS = os.getenv(
-    "COMPONENT_ATTENTION_BACKENDS", "text_encoder=torch_sdpa"
+    "COMPONENT_ATTENTION_BACKENDS", "transformer=sage_attn"
 )
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "60"))
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,200}")

@@ -96,12 +96,18 @@ set_env HOST_GID "$(id -g)"
 set_env_default VIDEO_RETENTION_HOURS 12
 set_env_default CLEANUP_INTERVAL_SECONDS 600
 set_env_default SAGEATTENTION_REVISION d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
-set_env_default ATTENTION_BACKEND sage_attn
-set_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa
+set_env_default ATTENTION_BACKEND fa
+set_env_default COMPONENT_ATTENTION_BACKENDS transformer=sage_attn
+migrate_env_default ATTENTION_BACKEND sage_attn fa
+migrate_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa transformer=sage_attn
 migrate_env_default RELEASE_ID h3-4h200-20260819-v1 h3-4h200-20260820-v2
 migrate_env_default SGLANG_IMAGE minimax-h3-h200-sglang:20260819-v1 minimax-h3-h200-sglang:20260820-v2
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260819-v1 minimax-h3-h200-api:20260820-v2
 migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260819-v1 minimax-h3-h200-reporter:20260820-v2
+migrate_env_default RELEASE_ID h3-4h200-20260820-v2 h3-4h200-20260820-v3
+migrate_env_default SGLANG_IMAGE minimax-h3-h200-sglang:20260820-v2 minimax-h3-h200-sglang:20260820-v3
+migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v2 minimax-h3-h200-api:20260820-v3
+migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260820-v2 minimax-h3-h200-reporter:20260820-v3
 
 set -a
 # shellcheck disable=SC1091

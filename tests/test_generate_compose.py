@@ -99,8 +99,12 @@ def test_sglang_command_contains_static_lora_and_four_gpu_topology():
     assert 'lora_path="$$LORA_LOCAL_PATH"' in command
     assert '--lora-path "$$lora_path"' in command
     assert '--lora-weight-name "$$LORA_WEIGHT"' in command
-    assert 'attention_backend="$${ATTENTION_BACKEND:-sage_attn}"' in command
+    assert 'attention_backend="$${ATTENTION_BACKEND:-fa}"' in command
+    assert (
+        'component_attention_backends="$${COMPONENT_ATTENTION_BACKENDS:-transformer=sage_attn}"'
+        in command
+    )
     assert '--attention-backend "$$attention_backend"' in command
     assert '--component-attention-backends "$$component_attention_backends"' in command
-    assert '"$$attention_backend" == "sage_attn"' in command
+    assert 'if [[ -n "$$component_attention_backends" ]]; then' in command
     assert 'exec "$${args[@]}"' in command
