@@ -227,6 +227,7 @@ Content-Type: application/json
 | `COMPONENT_ATTENTION_BACKENDS` | `transformer=sage_attn` | 只把主去噪 transformer 切到 SageAttention |
 | `SOL_AB_ENABLED` | `0` | 是否在完整安装时启用分区级 Sol-Attn A/B；一键脚本会自动维护 |
 | `SOL_AB_SLOT` | `1` | Sol 实验占用的 4 卡分区；禁止使用 slot 0，以保留稳定基线 |
+| `SOL_COMPONENT_ATTENTION_BACKENDS` | `text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn` | H3 DiT 使用 Sol；显式保护文本编码器及 Audio/Video VAE，避免它们误用 Sol |
 | `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0` | Sol 稀疏配置；6 NFE 下前 2 step 保持 dense |
 | `SOL_ATTN_STRICT` | `1` | 实验分区禁止 Sol kernel 异常时静默回退为 dense，避免产生虚假测速结果 |
 | `SOL_WARMUP_STEPS` | `3` | 启动时执行 3 个 warmup step，覆盖 `dense_steps=2` 后的首个稀疏 step |
@@ -240,6 +241,8 @@ Content-Type: application/json
 | `SGLANG_BASE_IMAGE` | `lmsysorg/sglang:dev` | 建议验证后换成 digest 固定的镜像引用 |
 
 如果 SGLang 上游代码结构变化，构建阶段会因短边补丁不匹配而失败，不会静默启动一个只支持 768 的服务。
+
+MiniMax H3 的 DiT attention backend 在第一次 forward 时延迟解析。Sol 实验分区因此使用全局 `sol_attn`，同时将 `text_encoder`、`audio_vae`、`video_vae` 显式覆盖为兼容后端；启动脚本会同时检查 DiT 实际解析为 Sol 和 Audio VAE 保持 FA，任一不满足都会退出，避免把未生效的实验误当作 Sol 测速。
 
 SageAttention 会改变 transformer 的 attention 数值路径。需要让所有组件回退到 FlashAttention 时清空组件覆盖后重新执行安装：
 

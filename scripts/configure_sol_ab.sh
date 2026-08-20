@@ -40,10 +40,17 @@ set_env_default() {
 set_env_default SOL_AB_SLOT 1
 set_env_default SGLANG_SOL_IMAGE minimax-h3-h200-sglang-sol:20260820-v1
 set_env_default SOL_ATTENTION_REVISION 5fe5febdf0f59fee1c0b44a5ce6665df0dabd247
-set_env_default SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,transformer=sol_attn
+set_env_default SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn
 set_env_default SOL_ATTENTION_BACKEND_CONFIG dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0
 set_env_default SOL_ATTN_STRICT 1
 set_env_default SOL_WARMUP_STEPS 3
+
+if [[ $(sed -n 's/^SOL_COMPONENT_ATTENTION_BACKENDS=//p' .env) == "text_encoder=torch_sdpa,transformer=sol_attn" ]]; then
+  set_env SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn
+fi
+if [[ $(sed -n 's/^RELEASE_ID=//p' .env) == "h3-4h200-20260820-v9" ]]; then
+  set_env RELEASE_ID h3-4h200-20260820-v10
+fi
 
 if [[ ${mode} == enable ]]; then
   set_env SOL_AB_ENABLED 1
@@ -174,14 +181,18 @@ if [[ ${mode} == enable ]]; then
   }
   sudo docker exec "${worker_container}" python3 -c 'import sol_attn; print("Sol-Attn import OK:", sol_attn.__file__)'
   worker_env=$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${worker_container}")
-  grep -Fx 'ATTENTION_BACKEND=fa' <<<"${worker_env}"
+  grep -Fx 'ATTENTION_BACKEND=sol_attn' <<<"${worker_env}"
   grep -Fx "COMPONENT_ATTENTION_BACKENDS=${SOL_COMPONENT_ATTENTION_BACKENDS}" <<<"${worker_env}"
   grep -Fx "ATTENTION_BACKEND_CONFIG=${SOL_ATTENTION_BACKEND_CONFIG}" <<<"${worker_env}"
   grep -Fx "SOL_ATTN_STRICT=${SOL_ATTN_STRICT}" <<<"${worker_env}"
   grep -Fx "WARMUP_STEPS=${SOL_WARMUP_STEPS}" <<<"${worker_env}"
-  if ! sudo docker logs "${worker_container}" 2>&1 \
-    | grep -Fq 'Attention backends for transformer: sol_attn (component constraint)'; then
-    echo "worker became healthy but did not log the transformer sol_attn component constraint" >&2
+  worker_logs=$(sudo docker logs "${worker_container}" 2>&1)
+  if ! grep -Fq 'Using sol_attn attention backend' <<<"${worker_logs}"; then
+    echo "worker became healthy but MiniMax H3 did not resolve its lazy DiT backend to sol_attn" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'Attention backends for audio_vae: fa' <<<"${worker_logs}"; then
+    echo "worker became healthy but audio_vae was not explicitly isolated on fa" >&2
     exit 1
   fi
   echo "SOL_AB_READY: port ${API_BASE_PORT}=Sage baseline; port $((API_BASE_PORT + SOL_AB_SLOT))=Sol-Attn"

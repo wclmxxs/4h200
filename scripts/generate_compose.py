@@ -162,8 +162,8 @@ def sglang_service(
     if sol_enabled:
         service.extend(
             [
-                "      ATTENTION_BACKEND: fa",
-                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,transformer=sol_attn}"',
+                "      ATTENTION_BACKEND: sol_attn",
+                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn}"',
                 '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0}"',
                 '      SOL_ATTN_STRICT: "${SOL_ATTN_STRICT:-1}"',
                 '      WARMUP_STEPS: "${SOL_WARMUP_STEPS:-3}"',
@@ -228,8 +228,8 @@ def api_service(
     if sol_enabled:
         service.extend(
             [
-                "      ATTENTION_BACKEND: fa",
-                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,transformer=sol_attn}"',
+                "      ATTENTION_BACKEND: sol_attn",
+                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn}"',
             ]
         )
     service.extend(
@@ -299,7 +299,7 @@ def main() -> None:
         "--sol-component-attention-backends",
         default=os.getenv(
             "SOL_COMPONENT_ATTENTION_BACKENDS",
-            "text_encoder=torch_sdpa,transformer=sol_attn",
+            "text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn",
         ),
     )
     parser.add_argument(
