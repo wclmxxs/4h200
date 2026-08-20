@@ -16,6 +16,28 @@ apt-get update
 apt-get install -y --no-install-recommends \
   ca-certificates curl git jq openssl python3 gnupg util-linux
 
+install_python_venv() {
+  local py_version
+  local py_pkg
+
+  py_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+  py_pkg="python${py_version}-venv"
+  if apt-cache show "${py_pkg}" >/dev/null 2>&1; then
+    apt-get install -y --no-install-recommends "${py_pkg}"
+    return
+  fi
+
+  if apt-cache show python3-venv >/dev/null 2>&1; then
+    apt-get install -y --no-install-recommends python3-venv
+    return
+  fi
+
+  echo "Unable to locate a Python venv package for ${py_version}. Install the venv package manually and rerun." >&2
+  exit 1
+}
+
+install_python_venv
+
 if ! command -v docker >/dev/null 2>&1; then
   apt-get install -y --no-install-recommends docker.io
 fi
