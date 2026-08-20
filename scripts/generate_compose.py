@@ -168,7 +168,7 @@ def sglang_service(
             [
                 "      ATTENTION_BACKEND: sol_attn",
                 '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn}"',
-                '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0}"',
+                '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25}"',
                 '      SOL_ATTN_STRICT: "${SOL_ATTN_STRICT:-1}"',
                 '      WARMUP_STEPS: "${SOL_WARMUP_STEPS:-3}"',
                 '      QUANTIZATION: "${SOL_QUANTIZATION:-fp8}"',
@@ -176,9 +176,9 @@ def sglang_service(
                 '      SGLANG_CACHE_DIT_ENABLED: "${SOL_CACHE_DIT_ENABLED:-true}"',
                 '      SGLANG_CACHE_DIT_FN: "${SOL_CACHE_DIT_FN:-1}"',
                 '      SGLANG_CACHE_DIT_BN: "${SOL_CACHE_DIT_BN:-0}"',
-                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-2}"',
-                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.04}"',
-                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-1}"',
+                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-1}"',
+                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.08}"',
+                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-2}"',
             ]
         )
     service.extend(
@@ -247,9 +247,9 @@ def api_service(
                 '      SGLANG_CACHE_DIT_ENABLED: "${SOL_CACHE_DIT_ENABLED:-true}"',
                 '      SGLANG_CACHE_DIT_FN: "${SOL_CACHE_DIT_FN:-1}"',
                 '      SGLANG_CACHE_DIT_BN: "${SOL_CACHE_DIT_BN:-0}"',
-                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-2}"',
-                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.04}"',
-                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-1}"',
+                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-1}"',
+                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.08}"',
+                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-2}"',
             ]
         )
     service.extend(
@@ -332,7 +332,7 @@ def main() -> None:
         "--sol-attention-backend-config",
         default=os.getenv(
             "SOL_ATTENTION_BACKEND_CONFIG",
-            "dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0",
+            "dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25",
         ),
     )
     parser.add_argument("--api-image", default=os.getenv("API_IMAGE", ""))
@@ -442,9 +442,9 @@ def main() -> None:
                     "enabled": os.getenv("SOL_CACHE_DIT_ENABLED", "true"),
                     "fn": os.getenv("SOL_CACHE_DIT_FN", "1"),
                     "bn": os.getenv("SOL_CACHE_DIT_BN", "0"),
-                    "warmup": os.getenv("SOL_CACHE_DIT_WARMUP", "2"),
-                    "rdt": os.getenv("SOL_CACHE_DIT_RDT", "0.04"),
-                    "mc": os.getenv("SOL_CACHE_DIT_MC", "1"),
+                    "warmup": os.getenv("SOL_CACHE_DIT_WARMUP", "1"),
+                    "rdt": os.getenv("SOL_CACHE_DIT_RDT", "0.08"),
+                    "mc": os.getenv("SOL_CACHE_DIT_MC", "2"),
                 },
             },
             "api_image": args.api_image,

@@ -157,7 +157,7 @@ def test_optimization_stack_applies_to_every_four_gpu_worker(monkeypatch, tmp_pa
             "--sol-component-attention-backends",
             "text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn",
             "--sol-attention-backend-config",
-            "dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0",
+            "dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25",
         ],
     )
 
@@ -178,16 +178,17 @@ def test_optimization_stack_applies_to_every_four_gpu_worker(monkeypatch, tmp_pa
         assert env["COMPONENT_ATTENTION_BACKENDS"].endswith("transformer=sol_attn}")
         assert "audio_vae=fa" in env["COMPONENT_ATTENTION_BACKENDS"]
         assert "video_vae=fa" in env["COMPONENT_ATTENTION_BACKENDS"]
-        assert "dense_steps=2" in env["ATTENTION_BACKEND_CONFIG"]
+        assert "dense_steps=1" in env["ATTENTION_BACKEND_CONFIG"]
+        assert "tau=1.25" in env["ATTENTION_BACKEND_CONFIG"]
         assert env["ATTENTION_BACKEND"] == "sol_attn"
         assert env["SOL_ATTN_STRICT"] == "${SOL_ATTN_STRICT:-1}"
         assert env["WARMUP_STEPS"] == "${SOL_WARMUP_STEPS:-3}"
         assert env["QUANTIZATION"] == "${SOL_QUANTIZATION:-fp8}"
         assert env["LORA_MERGE_MODE"] == "${SOL_LORA_MERGE_MODE:-dynamic}"
         assert env["SGLANG_CACHE_DIT_ENABLED"] == "${SOL_CACHE_DIT_ENABLED:-true}"
-        assert env["SGLANG_CACHE_DIT_WARMUP"] == "${SOL_CACHE_DIT_WARMUP:-2}"
-        assert env["SGLANG_CACHE_DIT_RDT"] == "${SOL_CACHE_DIT_RDT:-0.04}"
-        assert env["SGLANG_CACHE_DIT_MC"] == "${SOL_CACHE_DIT_MC:-1}"
+        assert env["SGLANG_CACHE_DIT_WARMUP"] == "${SOL_CACHE_DIT_WARMUP:-1}"
+        assert env["SGLANG_CACHE_DIT_RDT"] == "${SOL_CACHE_DIT_RDT:-0.08}"
+        assert env["SGLANG_CACHE_DIT_MC"] == "${SOL_CACHE_DIT_MC:-2}"
         assert (
             compose["services"][f"h3-api-{slot}"]["environment"]["ATTENTION_BACKEND"]
             == "sol_attn"
@@ -208,9 +209,9 @@ def test_optimization_stack_applies_to_every_four_gpu_worker(monkeypatch, tmp_pa
         "enabled": "true",
         "fn": "1",
         "bn": "0",
-        "warmup": "2",
-        "rdt": "0.04",
-        "mc": "1",
+        "warmup": "1",
+        "rdt": "0.08",
+        "mc": "2",
     }
 
 

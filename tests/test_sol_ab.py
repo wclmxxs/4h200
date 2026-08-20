@@ -32,6 +32,18 @@ def test_sol_stack_verifier_fails_closed_on_all_three_optimizations():
     assert "Fp8Config.get_name()" in script
 
 
+def test_install_migrates_the_previous_balanced_defaults():
+    script = (ROOT / "install.sh").read_text()
+    assert (
+        "migrate_env_default SOL_ATTENTION_BACKEND_CONFIG "
+        "dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0 "
+        "dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25"
+    ) in script
+    assert "migrate_env_default SOL_CACHE_DIT_WARMUP 2 1" in script
+    assert "migrate_env_default SOL_CACHE_DIT_RDT 0.04 0.08" in script
+    assert "migrate_env_default SOL_CACHE_DIT_MC 1 2" in script
+
+
 def test_sol_toggle_wrappers_are_one_command_entrypoints():
     enable = (ROOT / "enable_sol_ab.sh").read_text()
     disable = (ROOT / "disable_sol_ab.sh").read_text()
