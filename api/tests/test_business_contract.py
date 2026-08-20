@@ -73,3 +73,71 @@ def test_remote_media_host_policy_blocks_private_addresses():
     assert business.is_safe_remote_hostname("169.254.169.254") is False
     assert business.is_safe_remote_hostname("internal.byted.org") is True
     assert business.is_safe_remote_hostname("8.8.8.8") is True
+
+
+def test_generation_accepts_text_role_model_alias_and_unknown_fields():
+    value = request(
+        model="gateway-routing-alias",
+        content=[
+            {
+                "type": "text",
+                "role": "user_prompt",
+                "text": "A cinematic lake at sunrise.",
+                "client_content_metadata": {"request_id": "req-1"},
+            }
+        ],
+        client_request_metadata={"experiment": "test"},
+    )
+
+    assert value.model == "gateway-routing-alias"
+    assert value.content[0].role == "user_prompt"
+    assert "client_request_metadata" not in value.model_dump()
+    assert "client_content_metadata" not in value.content[0].model_dump()
+    upstream = business.to_upstream_request(value)
+    assert upstream["model"] == business.BUSINESS_MODEL
+    assert upstream["prompt"] == "A cinematic lake at sunrise."
+
+
+def test_generation_ignores_unknown_media_url_fields():
+    value = request(
+        model="another-model-name",
+        content=[
+            {"type": "text", "role": "prompt", "text": "Camera pushes in."},
+            {
+                "type": "image_url",
+                "role": "first_frame",
+                "image_url": {
+                    "url": "https://example.com/first.jpg",
+                    "mime_type": "image/jpeg",
+                },
+                "unused": True,
+            },
+        ],
+        resolution="704P",
+        duration=4,
+        ratio="adaptive",
+        vendor_options={"unused": True},
+    )
+
+    assert value.content[1].image_url is not None
+    assert value.content[1].image_url.model_dump() == {
+        "url": "https://example.com/first.jpg"
+    }
+    assert business.to_upstream_request(value)["task"] == "fl2va"
+
+
+def test_query_accepts_model_alias_and_unknown_fields():
+    value = business.QueryRequest.model_validate(
+        {
+            "model": "client-model-alias",
+            "task_id": "video_123",
+            "trace_context": {"trace_id": "trace-1"},
+        }
+    )
+
+    assert value.model == "client-model-alias"
+    assert value.task_id == "video_123"
+    assert value.model_dump() == {
+        "model": "client-model-alias",
+        "task_id": "video_123",
+    }
