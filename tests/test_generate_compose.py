@@ -122,6 +122,8 @@ def test_sglang_command_contains_static_lora_and_four_gpu_topology():
     assert '--component-attention-backends "$$component_attention_backends"' in command
     assert 'attention_backend_config="$${ATTENTION_BACKEND_CONFIG:-}"' in command
     assert '--attention-backend-config "$$attention_backend_config"' in command
+    assert 'warmup_steps="$${WARMUP_STEPS:-}"' in command
+    assert '--warmup-steps "$$warmup_steps"' in command
     assert 'if [[ -n "$$component_attention_backends" ]]; then' in command
     assert 'exec "$${args[@]}"' in command
 
@@ -175,6 +177,13 @@ def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
         "transformer=sol_attn}"
     )
     assert "dense_steps=2" in experiment["environment"]["ATTENTION_BACKEND_CONFIG"]
+    assert experiment["environment"]["ATTENTION_BACKEND"] == "sol_attn"
+    assert experiment["environment"]["SOL_ATTN_STRICT"] == "${SOL_ATTN_STRICT:-1}"
+    assert experiment["environment"]["WARMUP_STEPS"] == "${SOL_WARMUP_STEPS:-3}"
+    assert (
+        compose["services"]["h3-api-1"]["environment"]["ATTENTION_BACKEND"]
+        == "sol_attn"
+    )
     assert [item["attention_profile"] for item in config["instances"]] == [
         "sage_attn",
         "sol_attn",

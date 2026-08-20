@@ -42,6 +42,8 @@ set_env_default SGLANG_SOL_IMAGE minimax-h3-h200-sglang-sol:20260820-v1
 set_env_default SOL_ATTENTION_REVISION 5fe5febdf0f59fee1c0b44a5ce6665df0dabd247
 set_env_default SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,transformer=sol_attn
 set_env_default SOL_ATTENTION_BACKEND_CONFIG dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0
+set_env_default SOL_ATTN_STRICT 1
+set_env_default SOL_WARMUP_STEPS 3
 
 if [[ ${mode} == enable ]]; then
   set_env SOL_AB_ENABLED 1
@@ -145,6 +147,25 @@ if [[ ${health:-none} != healthy ]]; then
   exit 1
 fi
 
+api_service="h3-api-${SOL_AB_SLOT}"
+api_port=$((API_BASE_PORT + SOL_AB_SLOT))
+echo "Refreshing API metadata for partition ${SOL_AB_SLOT}..."
+"${compose[@]}" up -d --no-deps --force-recreate "${api_service}"
+api_deadline=$((SECONDS + 180))
+while (( SECONDS < api_deadline )); do
+  if curl -fsS "http://127.0.0.1:${api_port}/healthz" \
+    -H "Authorization: Bearer ${API_KEY}" \
+    | jq -e '.ok == true' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 3
+done
+if (( SECONDS >= api_deadline )); then
+  "${compose[@]}" logs --tail 200 "${api_service}" >&2 || true
+  echo "API partition ${SOL_AB_SLOT} did not become healthy" >&2
+  exit 1
+fi
+
 actual_image=$(sudo docker inspect -f '{{.Config.Image}}' "${worker_container}")
 if [[ ${mode} == enable ]]; then
   [[ ${actual_image} == "${SGLANG_SOL_IMAGE}" ]] || {
@@ -152,8 +173,17 @@ if [[ ${mode} == enable ]]; then
     exit 1
   }
   sudo docker exec "${worker_container}" python3 -c 'import sol_attn; print("Sol-Attn import OK:", sol_attn.__file__)'
-  sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${worker_container}" \
-    | grep -E '^(COMPONENT_ATTENTION_BACKENDS=.*sol_attn|ATTENTION_BACKEND_CONFIG=.*dense_steps=2)'
+  worker_env=$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${worker_container}")
+  grep -Fx 'ATTENTION_BACKEND=sol_attn' <<<"${worker_env}"
+  grep -Fx "COMPONENT_ATTENTION_BACKENDS=${SOL_COMPONENT_ATTENTION_BACKENDS}" <<<"${worker_env}"
+  grep -Fx "ATTENTION_BACKEND_CONFIG=${SOL_ATTENTION_BACKEND_CONFIG}" <<<"${worker_env}"
+  grep -Fx "SOL_ATTN_STRICT=${SOL_ATTN_STRICT}" <<<"${worker_env}"
+  grep -Fx "WARMUP_STEPS=${SOL_WARMUP_STEPS}" <<<"${worker_env}"
+  if ! sudo docker logs "${worker_container}" 2>&1 \
+    | grep -Fq 'Using sol_attn attention backend'; then
+    echo "worker became healthy but did not log the sol_attn backend" >&2
+    exit 1
+  fi
   echo "SOL_AB_READY: port ${API_BASE_PORT}=Sage baseline; port $((API_BASE_PORT + SOL_AB_SLOT))=Sol-Attn"
 else
   [[ ${actual_image} == "${SGLANG_IMAGE}" ]] || {

@@ -158,6 +158,8 @@ set_env_default SGLANG_SOL_IMAGE minimax-h3-h200-sglang-sol:20260820-v1
 set_env_default SOL_ATTENTION_REVISION 5fe5febdf0f59fee1c0b44a5ce6665df0dabd247
 set_env_default SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,transformer=sol_attn
 set_env_default SOL_ATTENTION_BACKEND_CONFIG dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0
+set_env_default SOL_ATTN_STRICT 1
+set_env_default SOL_WARMUP_STEPS 3
 set_env_default LORA_SIZE 779849816
 migrate_env_default ATTENTION_BACKEND sage_attn fa
 migrate_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa transformer=sage_attn
@@ -178,6 +180,7 @@ migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v4 minimax-h3-h200-ap
 migrate_env_default RELEASE_ID h3-4h200-20260820-v5 h3-4h200-20260820-v6
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v5 minimax-h3-h200-api:20260820-v6
 migrate_env_default RELEASE_ID h3-4h200-20260820-v6 h3-4h200-20260820-v7
+migrate_env_default RELEASE_ID h3-4h200-20260820-v7 h3-4h200-20260820-v8
 
 set -a
 # shellcheck disable=SC1091

@@ -80,7 +80,7 @@ git pull --ff-only
 ./enable_sol_ab.sh
 ```
 
-第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像和运行参数；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。
+第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker 和对应的轻量 API 容器。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像、运行参数及启动日志；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。Sol 分区使用 `warmup_steps=3`，确保启动预热至少执行一次稀疏 kernel，避免首个正式请求承担 JIT 开销。
 
 回滚也只重启 GPU 4–7：
 
@@ -228,6 +228,8 @@ Content-Type: application/json
 | `SOL_AB_ENABLED` | `0` | 是否在完整安装时启用分区级 Sol-Attn A/B；一键脚本会自动维护 |
 | `SOL_AB_SLOT` | `1` | Sol 实验占用的 4 卡分区；禁止使用 slot 0，以保留稳定基线 |
 | `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0` | Sol 稀疏配置；6 NFE 下前 2 step 保持 dense |
+| `SOL_ATTN_STRICT` | `1` | 实验分区禁止 Sol kernel 异常时静默回退为 dense，避免产生虚假测速结果 |
+| `SOL_WARMUP_STEPS` | `3` | 启动时执行 3 个 warmup step，覆盖 `dense_steps=2` 后的首个稀疏 step |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |

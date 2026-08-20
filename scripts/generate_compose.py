@@ -112,6 +112,7 @@ args=(
 attention_backend="$${ATTENTION_BACKEND:-fa}"
 component_attention_backends="$${COMPONENT_ATTENTION_BACKENDS:-transformer=sage_attn}"
 attention_backend_config="$${ATTENTION_BACKEND_CONFIG:-}"
+warmup_steps="$${WARMUP_STEPS:-}"
 if [[ -n "$$attention_backend" && "$$attention_backend" != "auto" ]]; then
   args+=(--attention-backend "$$attention_backend")
 fi
@@ -120,6 +121,9 @@ if [[ -n "$$component_attention_backends" ]]; then
 fi
 if [[ -n "$$attention_backend_config" ]]; then
   args+=(--attention-backend-config "$$attention_backend_config")
+fi
+if [[ -n "$$warmup_steps" ]]; then
+  args+=(--warmup-steps "$$warmup_steps")
 fi
 if [[ -n "$$WARMUP" ]]; then
   read -r -a warmup <<<"$$WARMUP"
@@ -158,9 +162,11 @@ def sglang_service(
     if sol_enabled:
         service.extend(
             [
-                "      ATTENTION_BACKEND: fa",
+                "      ATTENTION_BACKEND: sol_attn",
                 '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,transformer=sol_attn}"',
                 '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0}"',
+                '      SOL_ATTN_STRICT: "${SOL_ATTN_STRICT:-1}"',
+                '      WARMUP_STEPS: "${SOL_WARMUP_STEPS:-3}"',
             ]
         )
     service.extend(
@@ -192,12 +198,13 @@ def api_service(
     data_root: str,
     host: str,
     base_port: int,
+    sol_enabled: bool = False,
 ) -> list[str]:
     port = base_port + group_index
     slot = f"{data_root}/slots/{group_index}"
     indexes = ",".join(str(gpu["index"]) for gpu in group)
     uuids = ",".join(str(gpu["uuid"]) for gpu in group)
-    return [
+    service = [
         f"  h3-api-{group_index}:",
         "    image: ${API_IMAGE}",
         f"    container_name: minimax-h3-h200-api-{group_index}",
@@ -217,15 +224,27 @@ def api_service(
         f"      GPU_GROUP_INDEX: {quote(group_index)}",
         f"      GPU_INDEXES: {quote(indexes)}",
         f"      GPU_UUIDS: {quote(uuids)}",
-        "    volumes:",
-        f"      - {slot}/api-data:/data",
-        "    healthcheck:",
-        '      test: [\'CMD-SHELL\', \'curl -fsS -H "Authorization: Bearer $$API_KEY" http://127.0.0.1:30010/healthz | grep -q "\\"ok\\":true"\']',
-        "      interval: 10s",
-        "      timeout: 5s",
-        "      retries: 30",
-        "      start_period: 30s",
     ]
+    if sol_enabled:
+        service.extend(
+            [
+                "      ATTENTION_BACKEND: sol_attn",
+                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,transformer=sol_attn}"',
+            ]
+        )
+    service.extend(
+        [
+            "    volumes:",
+            f"      - {slot}/api-data:/data",
+            "    healthcheck:",
+            '      test: [\'CMD-SHELL\', \'curl -fsS -H "Authorization: Bearer $$API_KEY" http://127.0.0.1:30010/healthz | grep -q "\\"ok\\":true"\']',
+            "      interval: 10s",
+            "      timeout: 5s",
+            "      retries: 30",
+            "      start_period: 30s",
+        ]
+    )
+    return service
 
 
 def build_config(
@@ -331,7 +350,12 @@ def main() -> None:
         compose.append("")
         compose.extend(
             api_service(
-                group_index, group, args.data_root, args.advertise_host, args.base_port
+                group_index,
+                group,
+                args.data_root,
+                args.advertise_host,
+                args.base_port,
+                sol_enabled=(args.sol_ab_enabled and group_index == args.sol_ab_slot),
             )
         )
         compose.append("")
