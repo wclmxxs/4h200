@@ -168,6 +168,8 @@ migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v3 minimax-h3-h200-ap
 migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260820-v3 minimax-h3-h200-reporter:20260820-v4
 migrate_env_default RELEASE_ID h3-4h200-20260820-v4 h3-4h200-20260820-v5
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v4 minimax-h3-h200-api:20260820-v5
+migrate_env_default RELEASE_ID h3-4h200-20260820-v5 h3-4h200-20260820-v6
+migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v5 minimax-h3-h200-api:20260820-v6
 
 set -a
 # shellcheck disable=SC1091

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from app import business
 from pydantic import ValidationError
@@ -141,3 +143,8 @@ def test_query_accepts_model_alias_and_unknown_fields():
         "model": "client-model-alias",
         "task_id": "video_123",
     }
+
+
+def test_api_image_keeps_gateway_connections_alive():
+    dockerfile = Path(__file__).parents[2] / "docker" / "Dockerfile.api"
+    assert '"--timeout-keep-alive", "120"' in dockerfile.read_text()
