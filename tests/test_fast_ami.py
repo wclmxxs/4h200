@@ -92,3 +92,12 @@ def test_prepare_ami_stops_reporter_before_all_containers():
     all_stop = script.index('"${compose[@]}" stop', reporter_stop + 1)
     assert reporter_stop < all_stop
     assert "AMI_READY" in script
+
+
+def test_api_update_does_not_restart_gpu_workers():
+    script = (ROOT / "update_api.sh").read_text()
+
+    assert "--no-deps --force-recreate" in script
+    assert '"${api_services[@]}"' in script
+    assert "h3-sglang" not in script
+    assert "--timeout-keep-alive" in script

@@ -60,6 +60,7 @@ cd 4h200
 ```bash
 ./status.sh
 ./smoke_test.sh        # 会真实生成一个 704P / 6 NFE / 4 秒视频
+./update_api.sh         # 只重建 API 容器，不重启或重新预热 GPU worker
 ./stop.sh              # 先上报 unhealthy，再停止 reporter；缓存和输出保留
 ```
 
@@ -217,6 +218,6 @@ sed -i 's/^COMPONENT_ATTENTION_BACKENDS=.*/COMPONENT_ATTENTION_BACKENDS=/' .env
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest
-bash -n install.sh prepare_ami.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh
+bash -n install.sh prepare_ami.sh update_api.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh
 python3 -m py_compile api/app/*.py reporter/main.py scripts/generate_compose.py
 ```
