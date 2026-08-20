@@ -145,6 +145,17 @@ if [[ ! -x ${MODEL_VENV_PYTHON} ]]; then
   python3 -m venv "${MODEL_VENV_DIR}"
 fi
 
+if ! "${MODEL_VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
+  if ! "${MODEL_VENV_PYTHON}" -m ensurepip --upgrade; then
+    python3 -m venv --clear "${MODEL_VENV_DIR}"
+  fi
+fi
+
+if ! "${MODEL_VENV_PYTHON}" -m pip --version >/dev/null 2>&1; then
+  echo "pip is unavailable in ${MODEL_VENV_DIR}; install python3-venv/python3-pip and rerun" >&2
+  exit 1
+fi
+
 if ! "${MODEL_VENV_PYTHON}" - <<'PY'
 import importlib.util
 import sys
