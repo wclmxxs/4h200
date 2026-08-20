@@ -22,5 +22,5 @@ if ((${#inference_services[@]})); then
   # Let the reporter publish alive=false before it exits.
   sleep "$((REPORT_INTERVAL_SECONDS + 2))"
 fi
-"${compose[@]}" stop h3-reporter
+"${compose[@]}" stop h3-reporter h3-cleaner
 echo "Stopped MiniMax H3 services; model cache and outputs remain under ${DATA_ROOT}."

@@ -106,7 +106,7 @@ fi
 
 echo "Detected ${gpu_count} GPUs: ${service_count} x 4-H200 service(s) on ${INSTANCE_ID} (${ADVERTISE_HOST})"
 
-sudo mkdir -p "${DATA_ROOT}/hf-cache" "${DATA_ROOT}/reporter"
+sudo mkdir -p "${DATA_ROOT}/hf-cache" "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner"
 for ((slot=0; slot<service_count; slot++)); do
   sudo mkdir -p "${DATA_ROOT}/slots/${slot}/output" "${DATA_ROOT}/slots/${slot}/api-data"
 done
@@ -153,6 +153,7 @@ python3 scripts/generate_compose.py "${generate_args[@]}"
 
 compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
 "${compose[@]}" stop h3-reporter >/dev/null 2>&1 || true
+"${compose[@]}" up -d h3-cleaner
 
 startup_timeout=${STARTUP_TIMEOUT_SECONDS:-1800}
 for ((slot=0; slot<service_count; slot++)); do
@@ -198,7 +199,7 @@ for ((slot=0; slot<service_count; slot++)); do
 done
 
 report_started_at=$(date +%s)
-"${compose[@]}" up -d --remove-orphans h3-reporter
+"${compose[@]}" up -d --remove-orphans h3-cleaner h3-reporter
 deadline=$((SECONDS + 90))
 catalog_success=false
 while (( SECONDS < deadline )); do

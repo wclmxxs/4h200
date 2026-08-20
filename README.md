@@ -20,6 +20,7 @@
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
 - 每个 4 卡分区独立排队、独立故障、独立端口和独立注册健康状态。
 - 图片 URL 默认只允许公网解析地址或 `.byted.org`，避免推理容器访问云元数据和内网地址。
+- 生成视频和对应任务元数据保留 12 小时；独立 cleaner 每 10 分钟清理一次，不触碰模型与 LoRA 缓存。
 
 ## 部署
 
@@ -49,6 +50,7 @@ cd 4h200
 sudo docker logs -f minimax-h3-h200-sglang-0
 sudo docker logs -f minimax-h3-h200-api-0
 sudo docker logs -f minimax-h3-h200-reporter
+sudo docker logs -f minimax-h3-h200-cleaner
 ```
 
 ## 注册协议
@@ -170,6 +172,8 @@ Content-Type: application/json
 | `SHORT_EDGES` | `480,704` | 在官方 768 之外额外启用的短边 |
 | `WARMUP` | `864x480 1248x704 1344x768` | SGLang 启动预热规格 |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
+| `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
+| `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
 | `DATA_ROOT` | `/opt/dlami/nvme/minimax-h3-4h200` | 与 RTX6000PRO 仓完全分离 |
 | `SGLANG_BASE_IMAGE` | `lmsysorg/sglang:dev` | 建议验证后换成 digest 固定的镜像引用 |
 

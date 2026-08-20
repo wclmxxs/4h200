@@ -42,3 +42,10 @@ if [[ -f ${DATA_ROOT}/reporter/status.json ]]; then
 else
   echo "reporter has not written status yet"
 fi
+
+echo "=== cleanup ==="
+if [[ -f ${DATA_ROOT}/cleaner/status.json ]]; then
+  jq . "${DATA_ROOT}/cleaner/status.json"
+else
+  echo "cleaner has not written status yet"
+fi

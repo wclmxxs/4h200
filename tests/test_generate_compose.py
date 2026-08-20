@@ -79,12 +79,16 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
     ]
     assert config["instances"][1]["gpu_indexes"] == [4, 5, 6, 7]
     assert config["instances"][1]["id"] == "i-test-4h200-1"
-    assert len(compose["services"]) == 5
+    assert len(compose["services"]) == 6
     reservations = compose["services"]["h3-sglang-1"]["deploy"]["resources"][
         "reservations"
     ]["devices"]
     assert reservations[0]["device_ids"] == ["4", "5", "6", "7"]
     assert compose["services"]["h3-api-1"]["ports"] == ["0.0.0.0:30011:30010"]
+    assert compose["services"]["h3-cleaner"]["environment"] == {
+        "CLEANUP_ROOT": "/slots",
+        "CLEANUP_STATE": "/state/status.json",
+    }
 
 
 def test_sglang_command_contains_static_lora_and_four_gpu_topology():

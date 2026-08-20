@@ -261,6 +261,20 @@ def main() -> None:
 
     compose.extend(
         [
+            "  h3-cleaner:",
+            "    image: ${API_IMAGE}",
+            "    container_name: minimax-h3-h200-cleaner",
+            "    restart: unless-stopped",
+            "    init: true",
+            "    env_file: ../.env",
+            '    command: ["python", "-u", "-m", "app.cleanup"]',
+            "    environment:",
+            "      CLEANUP_ROOT: /slots",
+            "      CLEANUP_STATE: /state/status.json",
+            "    volumes:",
+            f"      - {args.data_root}/slots:/slots",
+            f"      - {args.data_root}/cleaner:/state",
+            "",
             "  h3-reporter:",
             "    image: ${REPORTER_IMAGE}",
             "    container_name: minimax-h3-h200-reporter",
