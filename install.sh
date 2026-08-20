@@ -470,13 +470,53 @@ for ((slot=0; slot<service_count; slot++)); do
   fi
 done
 
-report_started_at=$(date +%s)
+services_started_at=$(date +%s)
 "${compose[@]}" up -d --remove-orphans h3-cleaner h3-watchdog h3-reporter
+
+wait_for_watchdog() {
+  local startup_timeout=${WATCHDOG_STARTUP_TIMEOUT_SECONDS:-180}
+  local deadline=$((SECONDS + startup_timeout))
+  local next_report=$SECONDS
+  local state
+  while (( SECONDS < deadline )); do
+    if [[ -f ${DATA_ROOT}/watchdog/status.json ]] \
+      && jq -e --argjson started "${services_started_at}" \
+        '.timestamp >= $started' \
+        "${DATA_ROOT}/watchdog/status.json" >/dev/null 2>&1; then
+      if [[ ${WATCHDOG_ENABLED:-1} != "1" ]] \
+        || jq -e '.enabled == true' \
+          "${DATA_ROOT}/watchdog/status.json" >/dev/null 2>&1; then
+        echo "Queue watchdog is ready"
+        return 0
+      fi
+    fi
+    state=$(sudo docker inspect -f '{{.State.Status}}' \
+      minimax-h3-h200-watchdog 2>/dev/null || echo missing)
+    if [[ ${state} == exited || ${state} == dead ]]; then
+      echo "Queue watchdog exited before becoming ready" >&2
+      return 1
+    fi
+    if (( SECONDS >= next_report )); then
+      echo "Waiting for queue watchdog: state=${state}..."
+      next_report=$((SECONDS + progress_interval))
+    fi
+    sleep 2
+  done
+  echo "Queue watchdog timed out after ${startup_timeout}s" >&2
+  return 1
+}
+
+if ! wait_for_watchdog; then
+  "${compose[@]}" logs --tail 150 h3-watchdog
+  echo "services are healthy, but the queue watchdog did not become ready" >&2
+  exit 1
+fi
+
 deadline=$((SECONDS + 90))
 catalog_success=false
 while (( SECONDS < deadline )); do
   if [[ -f ${DATA_ROOT}/reporter/status.json ]] \
-    && jq -e --argjson started "${report_started_at}" \
+    && jq -e --argjson started "${services_started_at}" \
       '.catalog_success == true
        and .timestamp >= $started
        and .healthy_instances == .instance_count' \
@@ -489,20 +529,6 @@ done
 if [[ ${catalog_success} != true ]]; then
   "${compose[@]}" logs --tail 150 h3-reporter
   echo "services are healthy, but ReportCatalog registration did not succeed" >&2
-  exit 1
-fi
-if [[ ! -f ${DATA_ROOT}/watchdog/status.json ]] \
-  || ! jq -e --argjson started "${report_started_at}" \
-    '.timestamp >= $started' \
-    "${DATA_ROOT}/watchdog/status.json" >/dev/null 2>&1; then
-  "${compose[@]}" logs --tail 150 h3-watchdog
-  echo "services are healthy, but the queue watchdog did not become ready" >&2
-  exit 1
-fi
-if [[ ${WATCHDOG_ENABLED:-1} == "1" ]] \
-  && ! jq -e '.enabled == true' "${DATA_ROOT}/watchdog/status.json" >/dev/null; then
-  "${compose[@]}" logs --tail 150 h3-watchdog
-  echo "queue watchdog was requested but is not enabled" >&2
   exit 1
 fi
 

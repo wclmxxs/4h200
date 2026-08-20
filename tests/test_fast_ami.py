@@ -82,6 +82,8 @@ def test_install_has_safe_ami_fast_path_and_parallel_workers():
     assert 'worker_services+=("h3-sglang-${slot}")' in install
     assert 'up -d "${worker_services[@]}"' in install
     assert "Waiting for partition ${slot}" in install
+    assert "Waiting for queue watchdog" in install
+    assert "WATCHDOG_STARTUP_TIMEOUT_SECONDS" in install
     assert 'verify_sol_stack.sh "minimax-h3-h200-sglang-${slot}"' in install
     assert "instance-store NVMe" in install
 
