@@ -89,6 +89,12 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
     ]["devices"]
     assert reservations[0]["device_ids"] == ["4", "5", "6", "7"]
     assert compose["services"]["h3-api-1"]["ports"] == ["0.0.0.0:30011:30010"]
+    assert compose["services"]["h3-sglang-0"]["image"] == "${SGLANG_IMAGE}"
+    assert compose["services"]["h3-sglang-1"]["image"] == "${SGLANG_IMAGE}"
+    assert [item["attention_profile"] for item in config["instances"]] == [
+        "sage_attn",
+        "sage_attn",
+    ]
     assert (
         "/mnt/model-ebs/hf-cache:/cache/huggingface"
         in compose["services"]["h3-sglang-0"]["volumes"]
@@ -114,5 +120,91 @@ def test_sglang_command_contains_static_lora_and_four_gpu_topology():
     )
     assert '--attention-backend "$$attention_backend"' in command
     assert '--component-attention-backends "$$component_attention_backends"' in command
+    assert 'attention_backend_config="$${ATTENTION_BACKEND_CONFIG:-}"' in command
+    assert '--attention-backend-config "$$attention_backend_config"' in command
     assert 'if [[ -n "$$component_attention_backends" ]]; then' in command
     assert 'exec "$${args[@]}"' in command
+
+
+def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "detect_gpus", lambda: h200s(8))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_compose.py",
+            "--output-dir",
+            str(tmp_path),
+            "--data-root",
+            "/srv/h3-data",
+            "--advertise-host",
+            "16.78.214.130",
+            "--instance-id",
+            "i-test",
+            "--release-id",
+            "release-test",
+            "--sglang-image",
+            "sglang:sage",
+            "--sglang-sol-image",
+            "sglang:sol",
+            "--api-image",
+            "api:test",
+            "--sol-ab-enabled",
+            "--sol-ab-slot",
+            "1",
+            "--sol-component-attention-backends",
+            "text_encoder=torch_sdpa,transformer=sol_attn",
+            "--sol-attention-backend-config",
+            "dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0",
+        ],
+    )
+
+    MODULE.main()
+    compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
+    config = json.loads((tmp_path / "instances.json").read_text())
+
+    baseline = compose["services"]["h3-sglang-0"]
+    experiment = compose["services"]["h3-sglang-1"]
+    assert baseline["image"] == "${SGLANG_IMAGE}"
+    assert "ATTENTION_BACKEND_CONFIG" not in baseline["environment"]
+    assert experiment["image"] == "${SGLANG_SOL_IMAGE}"
+    assert experiment["deploy"]["resources"]["reservations"]["devices"][0][
+        "device_ids"
+    ] == ["4", "5", "6", "7"]
+    assert experiment["environment"]["COMPONENT_ATTENTION_BACKENDS"].endswith(
+        "transformer=sol_attn}"
+    )
+    assert "dense_steps=2" in experiment["environment"]["ATTENTION_BACKEND_CONFIG"]
+    assert [item["attention_profile"] for item in config["instances"]] == [
+        "sage_attn",
+        "sol_attn",
+    ]
+    assert config["deployment"]["sol_ab"]["enabled"] is True
+    assert config["deployment"]["sol_ab"]["slot"] == 1
+
+
+def test_sol_ab_rejects_baseline_slot(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "detect_gpus", lambda: h200s(8))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "generate_compose.py",
+            "--output-dir",
+            str(tmp_path),
+            "--advertise-host",
+            "16.78.214.130",
+            "--instance-id",
+            "i-test",
+            "--release-id",
+            "release-test",
+            "--sglang-sol-image",
+            "sglang:sol",
+            "--sol-ab-enabled",
+            "--sol-ab-slot",
+            "0",
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="non-zero existing group"):
+        MODULE.main()

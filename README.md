@@ -64,6 +64,38 @@ cd 4h200
 ./stop.sh              # 先上报 unhealthy，再停止 reporter；缓存和输出保留
 ```
 
+### Sol-Attn 稀疏注意力 A/B
+
+8 卡机器可以让两组 4×H200 同时保留不同的 attention 路径：
+
+| 端口 | GPU | 配置 |
+| --- | --- | --- |
+| `30010` | `0,1,2,3` | 原有 SageAttention 基线，不重启 |
+| `30011` | `4,5,6,7` | Sol-Attn；前 2 个去噪 step 使用 Sage dense，后续 step 使用稀疏 attention |
+
+启用只需要：
+
+```bash
+git pull --ff-only
+./enable_sol_ab.sh
+```
+
+第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像和运行参数；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。
+
+回滚也只重启 GPU 4–7：
+
+```bash
+./disable_sol_ab.sh
+```
+
+两组端口仍会照常注册到 `Minimax-H3-AWS-H200`。做严格串行测速时请直接请求 `30010` 和 `30011`，并确保网关没有同时向这台测试机派发任务。首次验证建议对相同 seed、prompt、时长和分辨率分别比较服务端推理耗时与画面质量；Sol-Attn 的收益主要出现在较长视频，4 秒视频可能被固定开销抵消。
+
+需要重建相同 tag 的 Sol 镜像时：
+
+```bash
+FORCE_BUILD_SOL=1 ./enable_sol_ab.sh
+```
+
 查看单个分区日志：
 
 ```bash
@@ -193,6 +225,9 @@ Content-Type: application/json
 | `WARMUP` | `864x480 1248x704 1344x768` | SGLang 启动预热规格 |
 | `ATTENTION_BACKEND` | `fa` | 所有组件的安全基础后端，避免 Audio/Video VAE 使用不支持的 SageAttention |
 | `COMPONENT_ATTENTION_BACKENDS` | `transformer=sage_attn` | 只把主去噪 transformer 切到 SageAttention |
+| `SOL_AB_ENABLED` | `0` | 是否在完整安装时启用分区级 Sol-Attn A/B；一键脚本会自动维护 |
+| `SOL_AB_SLOT` | `1` | Sol 实验占用的 4 卡分区；禁止使用 slot 0，以保留稳定基线 |
+| `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0` | Sol 稀疏配置；6 NFE 下前 2 step 保持 dense |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
@@ -218,6 +253,6 @@ sed -i 's/^COMPONENT_ATTENTION_BACKENDS=.*/COMPONENT_ATTENTION_BACKENDS=/' .env
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest
-bash -n install.sh prepare_ami.sh update_api.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh
+bash -n install.sh enable_sol_ab.sh disable_sol_ab.sh prepare_ami.sh update_api.sh status.sh stop.sh smoke_test.sh scripts/bootstrap_host.sh scripts/configure_sol_ab.sh
 python3 -m py_compile api/app/*.py reporter/main.py scripts/generate_compose.py
 ```

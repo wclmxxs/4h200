@@ -111,11 +111,15 @@ args=(
 )
 attention_backend="$${ATTENTION_BACKEND:-fa}"
 component_attention_backends="$${COMPONENT_ATTENTION_BACKENDS:-transformer=sage_attn}"
+attention_backend_config="$${ATTENTION_BACKEND_CONFIG:-}"
 if [[ -n "$$attention_backend" && "$$attention_backend" != "auto" ]]; then
   args+=(--attention-backend "$$attention_backend")
 fi
 if [[ -n "$$component_attention_backends" ]]; then
   args+=(--component-attention-backends "$$component_attention_backends")
+fi
+if [[ -n "$$attention_backend_config" ]]; then
+  args+=(--attention-backend-config "$$attention_backend_config")
 fi
 if [[ -n "$$WARMUP" ]]; then
   read -r -a warmup <<<"$$WARMUP"
@@ -130,13 +134,15 @@ def sglang_service(
     group: list[dict[str, object]],
     data_root: str,
     model_cache_root: str,
+    sol_enabled: bool = False,
 ) -> list[str]:
     indexes = [int(gpu["index"]) for gpu in group]
     slot = f"{data_root}/slots/{group_index}"
     device_ids = ", ".join(quote(index) for index in indexes)
-    return [
+    image = "${SGLANG_SOL_IMAGE}" if sol_enabled else "${SGLANG_IMAGE}"
+    service = [
         f"  h3-sglang-{group_index}:",
-        "    image: ${SGLANG_IMAGE}",
+        f"    image: {image}",
         f"    container_name: minimax-h3-h200-sglang-{group_index}",
         "    restart: unless-stopped",
         "    init: true",
@@ -148,23 +154,36 @@ def sglang_service(
         "      HF_HOME: /cache/huggingface",
         "      HF_HUB_CACHE: /cache/huggingface/hub",
         "      SGLANG_MINIMAX_H3_EXTRA_SHORT_EDGES: ${SHORT_EDGES:-480,704}",
-        "    volumes:",
-        f"      - {model_cache_root}:/cache/huggingface",
-        f"      - {slot}/output:/out/videos",
-        "    healthcheck:",
-        "      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:30020/health >/dev/null']",
-        "      interval: 10s",
-        "      timeout: 5s",
-        "      retries: 90",
-        "      start_period: 120s",
-        "    deploy:",
-        "      resources:",
-        "        reservations:",
-        "          devices:",
-        "            - driver: nvidia",
-        f"              device_ids: [{device_ids}]",
-        "              capabilities: [gpu]",
     ]
+    if sol_enabled:
+        service.extend(
+            [
+                "      ATTENTION_BACKEND: fa",
+                '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,transformer=sol_attn}"',
+                '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0}"',
+            ]
+        )
+    service.extend(
+        [
+            "    volumes:",
+            f"      - {model_cache_root}:/cache/huggingface",
+            f"      - {slot}/output:/out/videos",
+            "    healthcheck:",
+            "      test: ['CMD-SHELL', 'curl -fsS http://127.0.0.1:30020/health >/dev/null']",
+            "      interval: 10s",
+            "      timeout: 5s",
+            "      retries: 90",
+            "      start_period: 120s",
+            "    deploy:",
+            "      resources:",
+            "        reservations:",
+            "          devices:",
+            "            - driver: nvidia",
+            f"              device_ids: [{device_ids}]",
+            "              capabilities: [gpu]",
+        ]
+    )
+    return service
 
 
 def api_service(
@@ -216,6 +235,8 @@ def build_config(
     base_port: int,
     cpu_per_group: int,
     memory_per_group_mb: int,
+    sol_ab_enabled: bool = False,
+    sol_ab_slot: int = 1,
 ) -> list[dict[str, Any]]:
     instances = []
     for group_index, group in enumerate(groups):
@@ -232,6 +253,11 @@ def build_config(
                 "gpu_memory_mb": [int(gpu["memory_mb"]) for gpu in group],
                 "cpu": cpu_per_group,
                 "memory_mb": memory_per_group_mb,
+                "attention_profile": (
+                    "sol_attn"
+                    if sol_ab_enabled and group_index == sol_ab_slot
+                    else "sage_attn"
+                ),
             }
         )
     return instances
@@ -247,6 +273,23 @@ def main() -> None:
     parser.add_argument("--base-port", type=int, default=30010)
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--sglang-image", default=os.getenv("SGLANG_IMAGE", ""))
+    parser.add_argument("--sglang-sol-image", default=os.getenv("SGLANG_SOL_IMAGE", ""))
+    parser.add_argument("--sol-ab-enabled", action="store_true")
+    parser.add_argument("--sol-ab-slot", type=int, default=1)
+    parser.add_argument(
+        "--sol-component-attention-backends",
+        default=os.getenv(
+            "SOL_COMPONENT_ATTENTION_BACKENDS",
+            "text_encoder=torch_sdpa,transformer=sol_attn",
+        ),
+    )
+    parser.add_argument(
+        "--sol-attention-backend-config",
+        default=os.getenv(
+            "SOL_ATTENTION_BACKEND_CONFIG",
+            "dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0",
+        ),
+    )
     parser.add_argument("--api-image", default=os.getenv("API_IMAGE", ""))
     parser.add_argument("--allow-non-h200", action="store_true")
     args = parser.parse_args()
@@ -260,12 +303,30 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     gpus = detect_gpus()
     groups = partition_gpus(gpus, allow_non_h200=args.allow_non_h200)
+    if args.sol_ab_enabled:
+        if len(groups) < 2:
+            raise SystemExit("Sol-Attn A/B requires at least two 4-GPU groups")
+        if args.sol_ab_slot <= 0 or args.sol_ab_slot >= len(groups):
+            raise SystemExit(
+                "Sol-Attn A/B slot must be a non-zero existing group; "
+                f"got {args.sol_ab_slot} for {len(groups)} groups"
+            )
+        if not args.sglang_sol_image:
+            raise SystemExit(
+                "--sglang-sol-image is required when Sol-Attn A/B is enabled"
+            )
     cpu_per_group, memory_per_group_mb = detect_host_resources(len(groups))
 
     compose = ["name: minimax-h3-4h200", "", "services:"]
     for group_index, group in enumerate(groups):
         compose.extend(
-            sglang_service(group_index, group, args.data_root, args.model_cache_root)
+            sglang_service(
+                group_index,
+                group,
+                args.data_root,
+                args.model_cache_root,
+                sol_enabled=(args.sol_ab_enabled and group_index == args.sol_ab_slot),
+            )
         )
         compose.append("")
         compose.extend(
@@ -314,6 +375,8 @@ def main() -> None:
         args.base_port,
         cpu_per_group,
         memory_per_group_mb,
+        sol_ab_enabled=args.sol_ab_enabled,
+        sol_ab_slot=args.sol_ab_slot,
     )
     model_lock = json.loads((repo_root / "config/models.lock.json").read_text())
     reporter_config = {
@@ -327,6 +390,13 @@ def main() -> None:
         "deployment": {
             "release_id": args.release_id,
             "sglang_image": args.sglang_image,
+            "sol_ab": {
+                "enabled": args.sol_ab_enabled,
+                "slot": args.sol_ab_slot,
+                "sglang_image": args.sglang_sol_image,
+                "component_attention_backends": args.sol_component_attention_backends,
+                "attention_backend_config": args.sol_attention_backend_config,
+            },
             "api_image": args.api_image,
             "model": model_lock,
         },

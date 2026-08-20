@@ -151,6 +151,13 @@ set_env_default MODEL_CACHE_ROOT ""
 set_env_default SAGEATTENTION_REVISION d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
 set_env_default ATTENTION_BACKEND fa
 set_env_default COMPONENT_ATTENTION_BACKENDS transformer=sage_attn
+set_env_default ATTENTION_BACKEND_CONFIG ""
+set_env_default SOL_AB_ENABLED 0
+set_env_default SOL_AB_SLOT 1
+set_env_default SGLANG_SOL_IMAGE minimax-h3-h200-sglang-sol:20260820-v1
+set_env_default SOL_ATTENTION_REVISION 5fe5febdf0f59fee1c0b44a5ce6665df0dabd247
+set_env_default SOL_COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa,transformer=sol_attn
+set_env_default SOL_ATTENTION_BACKEND_CONFIG dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0
 set_env_default LORA_SIZE 779849816
 migrate_env_default ATTENTION_BACKEND sage_attn fa
 migrate_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa transformer=sage_attn
@@ -170,6 +177,7 @@ migrate_env_default RELEASE_ID h3-4h200-20260820-v4 h3-4h200-20260820-v5
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v4 minimax-h3-h200-api:20260820-v5
 migrate_env_default RELEASE_ID h3-4h200-20260820-v5 h3-4h200-20260820-v6
 migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v5 minimax-h3-h200-api:20260820-v6
+migrate_env_default RELEASE_ID h3-4h200-20260820-v6 h3-4h200-20260820-v7
 
 set -a
 # shellcheck disable=SC1091
@@ -291,6 +299,11 @@ build_image() {
 build_image docker/Dockerfile.sglang "${SGLANG_IMAGE}" \
   --build-arg "SGLANG_BASE_IMAGE=${SGLANG_BASE_IMAGE}" \
   --build-arg "SAGEATTENTION_REVISION=${SAGEATTENTION_REVISION:-d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4}"
+if [[ ${SOL_AB_ENABLED:-0} == "1" ]]; then
+  build_image docker/Dockerfile.sol-attn "${SGLANG_SOL_IMAGE}" \
+    --build-arg "SGLANG_BASE_IMAGE=${SGLANG_IMAGE}" \
+    --build-arg "SOL_ATTENTION_REVISION=${SOL_ATTENTION_REVISION}"
+fi
 build_image docker/Dockerfile.api "${API_IMAGE}"
 build_image docker/Dockerfile.reporter "${REPORTER_IMAGE}"
 
@@ -302,8 +315,15 @@ generate_args=(
   --base-port "${API_BASE_PORT}"
   --release-id "${RELEASE_ID}"
   --sglang-image "${SGLANG_IMAGE}"
+  --sglang-sol-image "${SGLANG_SOL_IMAGE}"
+  --sol-ab-slot "${SOL_AB_SLOT}"
+  --sol-component-attention-backends "${SOL_COMPONENT_ATTENTION_BACKENDS}"
+  --sol-attention-backend-config "${SOL_ATTENTION_BACKEND_CONFIG}"
   --api-image "${API_IMAGE}"
 )
+if [[ ${SOL_AB_ENABLED:-0} == "1" ]]; then
+  generate_args+=(--sol-ab-enabled)
+fi
 if [[ ${ALLOW_NON_H200:-0} == "1" ]]; then
   generate_args+=(--allow-non-h200)
 fi
