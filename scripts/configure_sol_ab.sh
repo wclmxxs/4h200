@@ -180,7 +180,7 @@ if [[ ${mode} == enable ]]; then
   grep -Fx "SOL_ATTN_STRICT=${SOL_ATTN_STRICT}" <<<"${worker_env}"
   grep -Fx "WARMUP_STEPS=${SOL_WARMUP_STEPS}" <<<"${worker_env}"
   if ! sudo docker logs "${worker_container}" 2>&1 \
-    | grep -Fq 'Using sol_attn attention backend (component constraint)'; then
+    | grep -Fq 'Attention backends for transformer: sol_attn (component constraint)'; then
     echo "worker became healthy but did not log the transformer sol_attn component constraint" >&2
     exit 1
   fi

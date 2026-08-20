@@ -18,7 +18,9 @@ def test_sol_toggle_targets_only_the_selected_nonzero_partition():
     assert "h3-sglang-0" not in script
     assert "SOL_AB_SLOT <= 0" in script
     assert "dense_steps=2" in script
-    assert "Using sol_attn attention backend (component constraint)" in script
+    assert (
+        "Attention backends for transformer: sol_attn (component constraint)" in script
+    )
     assert "set_env_default SOL_ATTN_STRICT 1" in script
     assert "set_env_default SOL_WARMUP_STEPS 3" in script
 
