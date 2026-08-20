@@ -80,7 +80,7 @@ git pull --ff-only
 ./enable_sol_ab.sh
 ```
 
-第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker 和对应的轻量 API 容器。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像、运行参数及启动日志；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。Sol 分区使用 `warmup_steps=3`，确保启动预热至少执行一次稀疏 kernel，避免首个正式请求承担 JIT 开销。
+第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker 和对应的轻量 API 容器。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像、运行参数及启动日志；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。Sol 分区使用 `warmup_steps=3`，确保默认 warmup shape 至少执行一次稀疏 kernel。Sol 的 SM90 kernel 会按 token shape 专门化；15 秒等不同时间长度的 shape 第一次请求仍可能包含 JIT，稳态测速应对相同参数连续运行两次并取第二次。
 
 回滚也只重启 GPU 4–7：
 
