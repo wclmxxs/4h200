@@ -174,14 +174,14 @@ if [[ ${mode} == enable ]]; then
   }
   sudo docker exec "${worker_container}" python3 -c 'import sol_attn; print("Sol-Attn import OK:", sol_attn.__file__)'
   worker_env=$(sudo docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${worker_container}")
-  grep -Fx 'ATTENTION_BACKEND=sol_attn' <<<"${worker_env}"
+  grep -Fx 'ATTENTION_BACKEND=fa' <<<"${worker_env}"
   grep -Fx "COMPONENT_ATTENTION_BACKENDS=${SOL_COMPONENT_ATTENTION_BACKENDS}" <<<"${worker_env}"
   grep -Fx "ATTENTION_BACKEND_CONFIG=${SOL_ATTENTION_BACKEND_CONFIG}" <<<"${worker_env}"
   grep -Fx "SOL_ATTN_STRICT=${SOL_ATTN_STRICT}" <<<"${worker_env}"
   grep -Fx "WARMUP_STEPS=${SOL_WARMUP_STEPS}" <<<"${worker_env}"
   if ! sudo docker logs "${worker_container}" 2>&1 \
-    | grep -Fq 'Using sol_attn attention backend'; then
-    echo "worker became healthy but did not log the sol_attn backend" >&2
+    | grep -Fq 'Using sol_attn attention backend (component constraint)'; then
+    echo "worker became healthy but did not log the transformer sol_attn component constraint" >&2
     exit 1
   fi
   echo "SOL_AB_READY: port ${API_BASE_PORT}=Sage baseline; port $((API_BASE_PORT + SOL_AB_SLOT))=Sol-Attn"

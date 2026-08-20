@@ -177,13 +177,10 @@ def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
         "transformer=sol_attn}"
     )
     assert "dense_steps=2" in experiment["environment"]["ATTENTION_BACKEND_CONFIG"]
-    assert experiment["environment"]["ATTENTION_BACKEND"] == "sol_attn"
+    assert experiment["environment"]["ATTENTION_BACKEND"] == "fa"
     assert experiment["environment"]["SOL_ATTN_STRICT"] == "${SOL_ATTN_STRICT:-1}"
     assert experiment["environment"]["WARMUP_STEPS"] == "${SOL_WARMUP_STEPS:-3}"
-    assert (
-        compose["services"]["h3-api-1"]["environment"]["ATTENTION_BACKEND"]
-        == "sol_attn"
-    )
+    assert compose["services"]["h3-api-1"]["environment"]["ATTENTION_BACKEND"] == "fa"
     assert [item["attention_profile"] for item in config["instances"]] == [
         "sage_attn",
         "sol_attn",
