@@ -49,3 +49,10 @@ if [[ -f ${DATA_ROOT}/cleaner/status.json ]]; then
 else
   echo "cleaner has not written status yet"
 fi
+
+echo "=== queue watchdog ==="
+if [[ -f ${DATA_ROOT}/watchdog/status.json ]]; then
+  jq . "${DATA_ROOT}/watchdog/status.json"
+else
+  echo "watchdog has not written status yet"
+fi

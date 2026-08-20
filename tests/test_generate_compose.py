@@ -83,7 +83,7 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
     ]
     assert config["instances"][1]["gpu_indexes"] == [4, 5, 6, 7]
     assert config["instances"][1]["id"] == "i-test-4h200-1"
-    assert len(compose["services"]) == 6
+    assert len(compose["services"]) == 7
     reservations = compose["services"]["h3-sglang-1"]["deploy"]["resources"][
         "reservations"
     ]["devices"]
@@ -103,6 +103,16 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
         "CLEANUP_ROOT": "/slots",
         "CLEANUP_STATE": "/state/status.json",
     }
+    assert (
+        compose["services"]["h3-sglang-0"]["environment"][
+            "PYTORCH_CUDA_ALLOC_CONF"
+        ]
+        == "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+    )
+    watchdog = compose["services"]["h3-watchdog"]
+    assert watchdog["image"] == "${WATCHDOG_IMAGE}"
+    assert "/var/run/docker.sock:/var/run/docker.sock" in watchdog["volumes"]
+    assert "/srv/h3-data/slots:/slots:ro" in watchdog["volumes"]
 
 
 def test_sglang_command_contains_static_lora_and_four_gpu_topology():

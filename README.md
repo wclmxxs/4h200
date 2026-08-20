@@ -20,6 +20,8 @@
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
 - 每个 4 卡分区独立排队、独立故障、独立端口和独立注册健康状态；启动时所有完整分区并行加载和预热。
+- PyTorch CUDA allocator 默认启用 `expandable_segments`，降低长短视频交替请求造成的显存碎片。
+- 独立 Watchdog 逐分区观察任务状态和 worker 日志：存在活跃任务但连续 5 分钟没有处理进展，或出现致命 CUDA OOM 时，只重启对应的 4 卡 worker；重启期间 Reporter 会自动把该端点上报为 unhealthy。
 - 图片 URL 默认只允许公网解析地址或 `.byted.org`，避免推理容器访问云元数据和内网地址。
 - 生成视频和对应任务元数据保留 12 小时；独立 cleaner 每 10 分钟清理一次，不触碰模型与 LoRA 缓存。
 
@@ -101,6 +103,7 @@ sudo docker logs -f minimax-h3-h200-sglang-0
 sudo docker logs -f minimax-h3-h200-api-0
 sudo docker logs -f minimax-h3-h200-reporter
 sudo docker logs -f minimax-h3-h200-cleaner
+sudo docker logs -f minimax-h3-h200-watchdog
 ```
 
 ## 注册协议
@@ -238,6 +241,9 @@ Content-Type: application/json
 | `SOL_CACHE_DIT_MC` | `3` | 最多连续缓存 3 个 step |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
+| `PYTORCH_CUDA_ALLOC_CONF` | `expandable_segments:True` | 减少跨请求显存碎片和可恢复性 OOM |
+| `WATCHDOG_STALL_SECONDS` | `300` | 有活跃任务但没有状态推进多久后重启对应 worker |
+| `WATCHDOG_RESTART_COOLDOWN_SECONDS` | `300` | 同一分区两次自动重启之间的最短间隔 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
 | `DATA_ROOT` | `/opt/dlami/nvme/minimax-h3-4h200` | 与 RTX6000PRO 仓完全分离 |
 | `MODEL_CACHE_ROOT` | 空（解析为 `${DATA_ROOT}/hf-cache`） | Hugging Face 基模和 LoRA 缓存；AMI 复用时应指向 EBS |

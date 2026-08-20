@@ -14,6 +14,7 @@ source .env
 set +a
 
 compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
+"${compose[@]}" stop h3-watchdog >/dev/null 2>&1 || true
 mapfile -t inference_services < <(
   "${compose[@]}" config --services | sed -n '/^h3-\(api\|sglang\)-/p'
 )

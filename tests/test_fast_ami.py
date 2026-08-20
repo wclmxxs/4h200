@@ -72,7 +72,7 @@ def test_install_has_safe_ami_fast_path_and_parallel_workers():
     install = (ROOT / "install.sh").read_text()
 
     assert "--from-ami" in install
-    assert install.index("docker stop minimax-h3-h200-reporter") < install.index(
+    assert install.index("docker stop minimax-h3-h200-watchdog") < install.index(
         "scripts/bootstrap_host.sh"
     )
     assert "detected_advertise_host=$(detect_imds public-ipv4" in install
@@ -89,9 +89,10 @@ def test_install_has_safe_ami_fast_path_and_parallel_workers():
 def test_prepare_ami_stops_reporter_before_all_containers():
     script = (ROOT / "prepare_ami.sh").read_text()
 
-    reporter_stop = script.index("stop h3-reporter")
+    monitor_stop = script.index("stop h3-watchdog")
+    reporter_stop = script.index("stop h3-reporter", monitor_stop + 1)
     all_stop = script.index('"${compose[@]}" stop', reporter_stop + 1)
-    assert reporter_stop < all_stop
+    assert monitor_stop < reporter_stop < all_stop
     assert "AMI_READY" in script
 
 

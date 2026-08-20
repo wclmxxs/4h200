@@ -53,6 +53,20 @@ CACHE_DIT_CONFIG = {
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "60"))
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,200}")
 SEED_UPPER_BOUND = 1 << 63
+TERMINAL_JOB_STATUSES = frozenset(
+    {"completed", "succeeded", "failed", "deleted", "cancelled"}
+)
+JOB_STATUS_RANK = {
+    "unknown": 0,
+    "queued": 1,
+    "in_progress": 2,
+    "running": 2,
+    "completed": 3,
+    "succeeded": 3,
+    "failed": 3,
+    "deleted": 3,
+    "cancelled": 3,
+}
 
 
 def validate_task_id(task_id: str) -> str:
@@ -68,9 +82,14 @@ def job_file(task_id: str) -> Path:
 def save_metadata(task_id: str, metadata: dict[str, Any]) -> None:
     JOB_ROOT.mkdir(parents=True, exist_ok=True)
     destination = job_file(task_id)
-    temporary = destination.with_suffix(".tmp")
-    temporary.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
-    temporary.replace(destination)
+    temporary = destination.with_name(
+        f".{destination.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    try:
+        temporary.write_text(json.dumps(metadata, ensure_ascii=False, indent=2))
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def load_metadata(task_id: str) -> dict[str, Any] | None:
@@ -81,6 +100,33 @@ def load_metadata(task_id: str) -> dict[str, Any] | None:
         return json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def record_job_status(
+    task_id: str,
+    status: object,
+    metadata: dict[str, Any] | None = None,
+    now: int | None = None,
+) -> dict[str, Any]:
+    """Persist status transitions so the external watchdog only polls live jobs."""
+    current = metadata if metadata is not None else (load_metadata(task_id) or {})
+    if not current:
+        return current
+    normalized = str(status or "unknown").lower()
+    observed_at = int(time.time()) if now is None else int(now)
+    previous = current.get("_watchdog") or {}
+    previous_status = str(previous.get("status") or "unknown")
+    if previous_status == normalized or JOB_STATUS_RANK.get(
+        normalized, 0
+    ) < JOB_STATUS_RANK.get(previous_status, 0):
+        return current
+    current["_watchdog"] = {
+        "status": normalized,
+        "status_changed_at": observed_at,
+        "terminal": normalized in TERMINAL_JOB_STATUSES,
+    }
+    save_metadata(task_id, current)
+    return current
 
 
 def with_resolved_seed(payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,14 +177,19 @@ async def submit_upstream(
         raise HTTPException(
             status_code=502, detail="SGLang response did not contain id"
         )
-    save_metadata(
+    created_at = int(job.get("created_at") or time.time())
+    metadata = {
+        "id": task_id,
+        "created_at": created_at,
+        "request": payload,
+        "business": business or {},
+    }
+    save_metadata(task_id, metadata)
+    record_job_status(
         task_id,
-        {
-            "id": task_id,
-            "created_at": int(job.get("created_at") or time.time()),
-            "request": payload,
-            "business": business or {},
-        },
+        job.get("status") or "queued",
+        metadata=metadata,
+        now=created_at,
     )
     return job
 
@@ -156,6 +207,7 @@ async def retrieve_upstream(task_id: str) -> dict[str, Any]:
     payload = response.json()
     metadata = load_metadata(task_id) or {}
     if metadata:
+        metadata = record_job_status(task_id, payload.get("status"), metadata=metadata)
         payload["_deployment"] = metadata
     return payload
 
@@ -170,7 +222,15 @@ async def delete_upstream(task_id: str) -> dict[str, Any]:
             status_code=503, detail=f"SGLang is unavailable: {exc}"
         ) from exc
     raise_upstream(response)
-    return response.json()
+    payload = response.json()
+    metadata = load_metadata(task_id) or {}
+    if metadata:
+        record_job_status(
+            task_id,
+            payload.get("status") or "cancelled",
+            metadata=metadata,
+        )
+    return payload
 
 
 async def stream_upstream(path: str) -> StreamingResponse:

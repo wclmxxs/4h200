@@ -15,7 +15,8 @@ cd "${ROOT}"
 
 compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
 
-echo "Stopping Reporter first so the source node cannot be registered by an AMI clone..."
+echo "Stopping Watchdog and Reporter before inference services..."
+"${compose[@]}" stop h3-watchdog >/dev/null 2>&1 || true
 "${compose[@]}" stop h3-reporter >/dev/null 2>&1 || true
 echo "Stopping all deployment containers while preserving images and caches..."
 "${compose[@]}" stop

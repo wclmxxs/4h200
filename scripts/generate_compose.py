@@ -161,6 +161,7 @@ def sglang_service(
         "    environment:",
         "      HF_HOME: /cache/huggingface",
         "      HF_HUB_CACHE: /cache/huggingface/hub",
+        '      PYTORCH_CUDA_ALLOC_CONF: "${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"',
         "      SGLANG_MINIMAX_H3_EXTRA_SHORT_EDGES: ${SHORT_EDGES:-480,704}",
     ]
     if sol_enabled:
@@ -407,6 +408,22 @@ def main() -> None:
             "    volumes:",
             f"      - {quote(str(output_dir / 'instances.json') + ':/config/instances.json:ro')}",
             f"      - {args.data_root}/reporter:/state",
+            "",
+            "  h3-watchdog:",
+            "    image: ${WATCHDOG_IMAGE}",
+            "    container_name: minimax-h3-h200-watchdog",
+            "    restart: unless-stopped",
+            "    init: true",
+            "    env_file: ../.env",
+            "    environment:",
+            "      WATCHDOG_CONFIG: /config/instances.json",
+            "      WATCHDOG_STATE: /state/status.json",
+            "      WATCHDOG_SLOTS_ROOT: /slots",
+            "    volumes:",
+            f"      - {quote(str(output_dir / 'instances.json') + ':/config/instances.json:ro')}",
+            f"      - {args.data_root}/slots:/slots:ro",
+            f"      - {args.data_root}/watchdog:/state",
+            "      - /var/run/docker.sock:/var/run/docker.sock",
         ]
     )
 

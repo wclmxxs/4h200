@@ -56,9 +56,10 @@ migrate_env_default() {
 
 sudo -v
 # A cloned AMI can auto-start the baked reporter with the source node's
-# identity. Stop it before any host/bootstrap work, then again after Docker is
-# started because bootstrap may restart the daemon.
-sudo docker stop minimax-h3-h200-reporter >/dev/null 2>&1 || true
+# identity, while the watchdog could restart workers during installation. Stop
+# both before host/bootstrap work, then again after Docker is started because
+# bootstrap may restart the daemon.
+sudo docker stop minimax-h3-h200-watchdog minimax-h3-h200-reporter >/dev/null 2>&1 || true
 if [[ ${from_ami} == true ]]; then
   echo "AMI fast path: validating baked host runtime"
   for command in curl jq openssl python3 flock findmnt nvidia-smi docker systemctl; do
@@ -79,7 +80,7 @@ if ! flock -n 9; then
   echo "another install.sh process is running" >&2
   exit 1
 fi
-sudo docker stop minimax-h3-h200-reporter >/dev/null 2>&1 || true
+sudo docker stop minimax-h3-h200-watchdog minimax-h3-h200-reporter >/dev/null 2>&1 || true
 
 if [[ -z $(sed -n 's/^API_KEY=//p' .env) ]]; then
   set_env API_KEY "$(openssl rand -hex 32)"
@@ -147,6 +148,16 @@ set_env HOST_UID "$(id -u)"
 set_env HOST_GID "$(id -g)"
 set_env_default VIDEO_RETENTION_HOURS 12
 set_env_default CLEANUP_INTERVAL_SECONDS 600
+set_env_default PYTORCH_CUDA_ALLOC_CONF expandable_segments:True
+set_env_default WATCHDOG_ENABLED 1
+set_env_default WATCHDOG_INTERVAL_SECONDS 15
+set_env_default WATCHDOG_STALL_SECONDS 300
+set_env_default WATCHDOG_INITIAL_GRACE_SECONDS 120
+set_env_default WATCHDOG_RESTART_COOLDOWN_SECONDS 300
+set_env_default WATCHDOG_JOB_WINDOW_SECONDS 21600
+set_env_default WATCHDOG_MAX_JOB_RECORDS 2000
+set_env_default WATCHDOG_MAX_ACTIVE_POLLS 128
+set_env_default WATCHDOG_IMAGE minimax-h3-h200-watchdog:20260821-v1
 set_env_default MODEL_CACHE_ROOT ""
 set_env_default SAGEATTENTION_REVISION d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
 set_env_default ATTENTION_BACKEND fa
@@ -202,6 +213,8 @@ migrate_env_default RELEASE_ID h3-4h200-20260820-v12 h3-4h200-20260820-v13
 migrate_env_default SOL_ATTENTION_BACKEND_CONFIG dense_backend=sage_attn,dense_steps=1,kv_splits=auto,tau=1.25 dense_backend=sage_attn,dense_steps=0,kv_splits=auto,tau=1.5
 migrate_env_default SOL_CACHE_DIT_RDT 0.08 0.12
 migrate_env_default SOL_CACHE_DIT_MC 2 3
+migrate_env_default RELEASE_ID h3-4h200-20260820-v13 h3-4h200-20260821-v14
+migrate_env_default API_IMAGE minimax-h3-h200-api:20260820-v7 minimax-h3-h200-api:20260821-v8
 
 set -a
 # shellcheck disable=SC1091
@@ -233,13 +246,20 @@ fi
 
 echo "Detected ${gpu_count} GPUs: ${service_count} x 4-H200 service(s) on ${INSTANCE_ID} (${ADVERTISE_HOST})"
 
-sudo mkdir -p "${MODEL_CACHE_ROOT}" "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner"
+sudo mkdir -p \
+  "${MODEL_CACHE_ROOT}" \
+  "${DATA_ROOT}/reporter" \
+  "${DATA_ROOT}/cleaner" \
+  "${DATA_ROOT}/watchdog"
 for ((slot=0; slot<service_count; slot++)); do
   sudo mkdir -p "${DATA_ROOT}/slots/${slot}/output" "${DATA_ROOT}/slots/${slot}/api-data"
 done
 sudo chown "$(id -u):$(id -g)" "${DATA_ROOT}" "${MODEL_CACHE_ROOT}"
 sudo chown -R "$(id -u):$(id -g)" \
-  "${DATA_ROOT}/reporter" "${DATA_ROOT}/cleaner" "${DATA_ROOT}/slots"
+  "${DATA_ROOT}/reporter" \
+  "${DATA_ROOT}/cleaner" \
+  "${DATA_ROOT}/watchdog" \
+  "${DATA_ROOT}/slots"
 if [[ ! -w ${MODEL_CACHE_ROOT} ]]; then
   echo "Model cache ownership differs from this user; repairing ${MODEL_CACHE_ROOT}"
   sudo chown -R "$(id -u):$(id -g)" "${MODEL_CACHE_ROOT}"
@@ -330,6 +350,7 @@ if [[ ${OPTIMIZATION_STACK_ENABLED:-1} == "1" ]]; then
 fi
 build_image docker/Dockerfile.api "${API_IMAGE}"
 build_image docker/Dockerfile.reporter "${REPORTER_IMAGE}"
+build_image docker/Dockerfile.watchdog "${WATCHDOG_IMAGE}"
 
 generate_args=(
   --data-root "${DATA_ROOT}"
@@ -353,7 +374,7 @@ fi
 python3 scripts/generate_compose.py "${generate_args[@]}"
 
 compose=(sudo docker compose --env-file .env -f .generated/compose.yaml)
-"${compose[@]}" stop h3-reporter >/dev/null 2>&1 || true
+"${compose[@]}" stop h3-watchdog h3-reporter >/dev/null 2>&1 || true
 "${compose[@]}" up -d h3-cleaner
 
 startup_timeout=${STARTUP_TIMEOUT_SECONDS:-1800}
@@ -450,7 +471,7 @@ for ((slot=0; slot<service_count; slot++)); do
 done
 
 report_started_at=$(date +%s)
-"${compose[@]}" up -d --remove-orphans h3-cleaner h3-reporter
+"${compose[@]}" up -d --remove-orphans h3-cleaner h3-watchdog h3-reporter
 deadline=$((SECONDS + 90))
 catalog_success=false
 while (( SECONDS < deadline )); do
@@ -470,10 +491,25 @@ if [[ ${catalog_success} != true ]]; then
   echo "services are healthy, but ReportCatalog registration did not succeed" >&2
   exit 1
 fi
+if [[ ! -f ${DATA_ROOT}/watchdog/status.json ]] \
+  || ! jq -e --argjson started "${report_started_at}" \
+    '.timestamp >= $started' \
+    "${DATA_ROOT}/watchdog/status.json" >/dev/null 2>&1; then
+  "${compose[@]}" logs --tail 150 h3-watchdog
+  echo "services are healthy, but the queue watchdog did not become ready" >&2
+  exit 1
+fi
+if [[ ${WATCHDOG_ENABLED:-1} == "1" ]] \
+  && ! jq -e '.enabled == true' "${DATA_ROOT}/watchdog/status.json" >/dev/null; then
+  "${compose[@]}" logs --tail 150 h3-watchdog
+  echo "queue watchdog was requested but is not enabled" >&2
+  exit 1
+fi
 
 echo "READY: ${service_count} x 4-H200 services"
 echo "PSM=${PSM}"
 echo "SERVICE_ID=${SERVICE_ID}"
 echo "Public endpoints: http://${ADVERTISE_HOST}:${API_BASE_PORT}-$((API_BASE_PORT + service_count - 1))"
+echo "Watchdog: enabled=${WATCHDOG_ENABLED}; stalled active queue threshold=${WATCHDOG_STALL_SECONDS}s"
 jq '{catalog_success,healthy_instances,instance_count,catalog_response}' \
   "${DATA_ROOT}/reporter/status.json"
