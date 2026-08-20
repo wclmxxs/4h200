@@ -1,6 +1,8 @@
 ARG SGLANG_BASE_IMAGE=lmsysorg/sglang:dev
 FROM ${SGLANG_BASE_IMAGE}
 
+ARG SAGEATTENTION_REVISION=d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
+
 COPY patches/minimax-h3-short-edge.patch /tmp/minimax-h3-short-edge.patch
 RUN cd /sgl-workspace/sglang \
     && if git apply -p1 --check /tmp/minimax-h3-short-edge.patch; then \
@@ -12,3 +14,13 @@ RUN cd /sgl-workspace/sglang \
          exit 1; \
        fi \
     && rm /tmp/minimax-h3-short-edge.patch
+
+# Pin the upstream revision containing the Hopper/SM90 binding fix. --no-deps
+# prevents pip from replacing the CUDA/PyTorch stack already validated by SGLang.
+RUN TORCH_CUDA_ARCH_LIST=9.0 python3 -m pip install \
+      --no-cache-dir \
+      --no-deps \
+      --force-reinstall \
+      --no-build-isolation \
+      "git+https://github.com/thu-ml/SageAttention.git@${SAGEATTENTION_REVISION}" \
+    && python3 -c 'import importlib.util; assert importlib.util.find_spec("sageattention")'

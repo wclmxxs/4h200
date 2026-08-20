@@ -15,5 +15,11 @@
   },
   "business_nfe": [4, 6, 8],
   "default_business_nfe": 6,
-  "sglang_sigma_grid_offset": 1
+  "sglang_sigma_grid_offset": 1,
+  "attention": {
+    "default_backend": "sage_attn",
+    "component_overrides": "text_encoder=torch_sdpa",
+    "sageattention_revision": "d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4",
+    "cuda_arch": "9.0"
+  }
 }

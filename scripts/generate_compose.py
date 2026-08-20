@@ -109,6 +109,14 @@ args=(
   --host 0.0.0.0
   --port 30020
 )
+attention_backend="$${ATTENTION_BACKEND:-sage_attn}"
+component_attention_backends="$${COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa}"
+if [[ -n "$$attention_backend" && "$$attention_backend" != "auto" ]]; then
+  args+=(--attention-backend "$$attention_backend")
+  if [[ "$$attention_backend" == "sage_attn" && -n "$$component_attention_backends" ]]; then
+    args+=(--component-attention-backends "$$component_attention_backends")
+  fi
+fi
 if [[ -n "$$WARMUP" ]]; then
   read -r -a warmup <<<"$$WARMUP"
   args+=(--warmup-resolutions "$${warmup[@]}")

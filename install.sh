@@ -19,6 +19,21 @@ set_env() {
   fi
 }
 
+set_env_default() {
+  local key=$1 value=$2
+  if ! grep -q "^${key}=" .env; then
+    printf '%s=%s\n' "${key}" "${value}" >> .env
+  fi
+}
+
+migrate_env_default() {
+  local key=$1 old_value=$2 new_value=$3 current
+  current=$(sed -n "s/^${key}=//p" .env)
+  if [[ ${current} == "${old_value}" ]]; then
+    set_env "${key}" "${new_value}"
+  fi
+}
+
 sudo -v
 sudo scripts/bootstrap_host.sh
 exec 9>.state/install.lock
@@ -78,6 +93,15 @@ fi
 
 set_env HOST_UID "$(id -u)"
 set_env HOST_GID "$(id -g)"
+set_env_default VIDEO_RETENTION_HOURS 12
+set_env_default CLEANUP_INTERVAL_SECONDS 600
+set_env_default SAGEATTENTION_REVISION d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4
+set_env_default ATTENTION_BACKEND sage_attn
+set_env_default COMPONENT_ATTENTION_BACKENDS text_encoder=torch_sdpa
+migrate_env_default RELEASE_ID h3-4h200-20260819-v1 h3-4h200-20260820-v2
+migrate_env_default SGLANG_IMAGE minimax-h3-h200-sglang:20260819-v1 minimax-h3-h200-sglang:20260820-v2
+migrate_env_default API_IMAGE minimax-h3-h200-api:20260819-v1 minimax-h3-h200-api:20260820-v2
+migrate_env_default REPORTER_IMAGE minimax-h3-h200-reporter:20260819-v1 minimax-h3-h200-reporter:20260820-v2
 
 set -a
 # shellcheck disable=SC1091
@@ -131,6 +155,7 @@ export LORA_LOCAL_PATH="${lora_local_path}"
 docker_cmd=(sudo docker)
 "${docker_cmd[@]}" build --progress=plain \
   --build-arg "SGLANG_BASE_IMAGE=${SGLANG_BASE_IMAGE}" \
+  --build-arg "SAGEATTENTION_REVISION=${SAGEATTENTION_REVISION:-d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4}" \
   -f docker/Dockerfile.sglang -t "${SGLANG_IMAGE}" .
 "${docker_cmd[@]}" build --progress=plain \
   -f docker/Dockerfile.api -t "${API_IMAGE}" .
