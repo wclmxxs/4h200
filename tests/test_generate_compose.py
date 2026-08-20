@@ -124,11 +124,13 @@ def test_sglang_command_contains_static_lora_and_four_gpu_topology():
     assert '--attention-backend-config "$$attention_backend_config"' in command
     assert 'warmup_steps="$${WARMUP_STEPS:-}"' in command
     assert '--warmup-steps "$$warmup_steps"' in command
+    assert 'quantization="$${QUANTIZATION:-}"' in command
+    assert '--quantization "$$quantization"' in command
     assert 'if [[ -n "$$component_attention_backends" ]]; then' in command
     assert 'exec "$${args[@]}"' in command
 
 
-def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
+def test_optimization_stack_applies_to_every_four_gpu_worker(monkeypatch, tmp_path):
     monkeypatch.setattr(MODULE, "detect_gpus", lambda: h200s(8))
     monkeypatch.setattr(
         sys,
@@ -151,9 +153,7 @@ def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
             "sglang:sol",
             "--api-image",
             "api:test",
-            "--sol-ab-enabled",
-            "--sol-ab-slot",
-            "1",
+            "--optimization-stack-enabled",
             "--sol-component-attention-backends",
             "text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn",
             "--sol-attention-backend-config",
@@ -165,37 +165,57 @@ def test_sol_ab_changes_only_second_four_gpu_worker(monkeypatch, tmp_path):
     compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
     config = json.loads((tmp_path / "instances.json").read_text())
 
-    baseline = compose["services"]["h3-sglang-0"]
-    experiment = compose["services"]["h3-sglang-1"]
-    assert baseline["image"] == "${SGLANG_IMAGE}"
-    assert "ATTENTION_BACKEND_CONFIG" not in baseline["environment"]
-    assert experiment["image"] == "${SGLANG_SOL_IMAGE}"
-    assert experiment["deploy"]["resources"]["reservations"]["devices"][0][
-        "device_ids"
-    ] == ["4", "5", "6", "7"]
-    assert experiment["environment"]["COMPONENT_ATTENTION_BACKENDS"].endswith(
-        "transformer=sol_attn}"
-    )
-    assert "audio_vae=fa" in experiment["environment"]["COMPONENT_ATTENTION_BACKENDS"]
-    assert "video_vae=fa" in experiment["environment"]["COMPONENT_ATTENTION_BACKENDS"]
-    assert "dense_steps=2" in experiment["environment"]["ATTENTION_BACKEND_CONFIG"]
-    assert experiment["environment"]["ATTENTION_BACKEND"] == "sol_attn"
-    assert experiment["environment"]["SOL_ATTN_STRICT"] == "${SOL_ATTN_STRICT:-1}"
-    assert experiment["environment"]["WARMUP_STEPS"] == "${SOL_WARMUP_STEPS:-3}"
-    assert (
-        compose["services"]["h3-api-1"]["environment"]["ATTENTION_BACKEND"]
-        == "sol_attn"
-    )
+    assert compose["services"]["h3-sglang-0"]["deploy"]["resources"]["reservations"][
+        "devices"
+    ][0]["device_ids"] == ["0", "1", "2", "3"]
+    assert compose["services"]["h3-sglang-1"]["deploy"]["resources"]["reservations"][
+        "devices"
+    ][0]["device_ids"] == ["4", "5", "6", "7"]
+    for slot in (0, 1):
+        worker = compose["services"][f"h3-sglang-{slot}"]
+        assert worker["image"] == "${SGLANG_SOL_IMAGE}"
+        env = worker["environment"]
+        assert env["COMPONENT_ATTENTION_BACKENDS"].endswith("transformer=sol_attn}")
+        assert "audio_vae=fa" in env["COMPONENT_ATTENTION_BACKENDS"]
+        assert "video_vae=fa" in env["COMPONENT_ATTENTION_BACKENDS"]
+        assert "dense_steps=2" in env["ATTENTION_BACKEND_CONFIG"]
+        assert env["ATTENTION_BACKEND"] == "sol_attn"
+        assert env["SOL_ATTN_STRICT"] == "${SOL_ATTN_STRICT:-1}"
+        assert env["WARMUP_STEPS"] == "${SOL_WARMUP_STEPS:-3}"
+        assert env["QUANTIZATION"] == "${SOL_QUANTIZATION:-fp8}"
+        assert env["LORA_MERGE_MODE"] == "${SOL_LORA_MERGE_MODE:-dynamic}"
+        assert env["SGLANG_CACHE_DIT_ENABLED"] == "${SOL_CACHE_DIT_ENABLED:-true}"
+        assert env["SGLANG_CACHE_DIT_WARMUP"] == "${SOL_CACHE_DIT_WARMUP:-2}"
+        assert env["SGLANG_CACHE_DIT_RDT"] == "${SOL_CACHE_DIT_RDT:-0.04}"
+        assert env["SGLANG_CACHE_DIT_MC"] == "${SOL_CACHE_DIT_MC:-1}"
+        assert (
+            compose["services"][f"h3-api-{slot}"]["environment"]["ATTENTION_BACKEND"]
+            == "sol_attn"
+        )
     assert [item["attention_profile"] for item in config["instances"]] == [
-        "sage_attn",
+        "sol_attn",
         "sol_attn",
     ]
-    assert config["deployment"]["sol_ab"]["enabled"] is True
-    assert config["deployment"]["sol_ab"]["slot"] == 1
+    assert [item["optimization_profile"] for item in config["instances"]] == [
+        "sol_attn_fp8_cache_dit",
+        "sol_attn_fp8_cache_dit",
+    ]
+    stack = config["deployment"]["optimization_stack"]
+    assert stack["enabled"] is True
+    assert stack["quantization"] == "fp8"
+    assert stack["lora_merge_mode"] == "dynamic"
+    assert stack["cache_dit"] == {
+        "enabled": "true",
+        "fn": "1",
+        "bn": "0",
+        "warmup": "2",
+        "rdt": "0.04",
+        "mc": "1",
+    }
 
 
-def test_sol_ab_rejects_baseline_slot(monkeypatch, tmp_path):
-    monkeypatch.setattr(MODULE, "detect_gpus", lambda: h200s(8))
+def test_optimization_stack_supports_one_four_gpu_group(monkeypatch, tmp_path):
+    monkeypatch.setattr(MODULE, "detect_gpus", lambda: h200s(4))
     monkeypatch.setattr(
         sys,
         "argv",
@@ -211,11 +231,10 @@ def test_sol_ab_rejects_baseline_slot(monkeypatch, tmp_path):
             "release-test",
             "--sglang-sol-image",
             "sglang:sol",
-            "--sol-ab-enabled",
-            "--sol-ab-slot",
-            "0",
+            "--optimization-stack-enabled",
         ],
     )
 
-    with pytest.raises(SystemExit, match="non-zero existing group"):
-        MODULE.main()
+    MODULE.main()
+    compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
+    assert compose["services"]["h3-sglang-0"]["image"] == "${SGLANG_SOL_IMAGE}"

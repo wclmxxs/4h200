@@ -113,6 +113,7 @@ attention_backend="$${ATTENTION_BACKEND:-fa}"
 component_attention_backends="$${COMPONENT_ATTENTION_BACKENDS:-transformer=sage_attn}"
 attention_backend_config="$${ATTENTION_BACKEND_CONFIG:-}"
 warmup_steps="$${WARMUP_STEPS:-}"
+quantization="$${QUANTIZATION:-}"
 if [[ -n "$$attention_backend" && "$$attention_backend" != "auto" ]]; then
   args+=(--attention-backend "$$attention_backend")
 fi
@@ -124,6 +125,9 @@ if [[ -n "$$attention_backend_config" ]]; then
 fi
 if [[ -n "$$warmup_steps" ]]; then
   args+=(--warmup-steps "$$warmup_steps")
+fi
+if [[ -n "$$quantization" ]]; then
+  args+=(--quantization "$$quantization")
 fi
 if [[ -n "$$WARMUP" ]]; then
   read -r -a warmup <<<"$$WARMUP"
@@ -167,6 +171,14 @@ def sglang_service(
                 '      ATTENTION_BACKEND_CONFIG: "${SOL_ATTENTION_BACKEND_CONFIG:-dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0}"',
                 '      SOL_ATTN_STRICT: "${SOL_ATTN_STRICT:-1}"',
                 '      WARMUP_STEPS: "${SOL_WARMUP_STEPS:-3}"',
+                '      QUANTIZATION: "${SOL_QUANTIZATION:-fp8}"',
+                '      LORA_MERGE_MODE: "${SOL_LORA_MERGE_MODE:-dynamic}"',
+                '      SGLANG_CACHE_DIT_ENABLED: "${SOL_CACHE_DIT_ENABLED:-true}"',
+                '      SGLANG_CACHE_DIT_FN: "${SOL_CACHE_DIT_FN:-1}"',
+                '      SGLANG_CACHE_DIT_BN: "${SOL_CACHE_DIT_BN:-0}"',
+                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-2}"',
+                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.04}"',
+                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-1}"',
             ]
         )
     service.extend(
@@ -230,6 +242,14 @@ def api_service(
             [
                 "      ATTENTION_BACKEND: sol_attn",
                 '      COMPONENT_ATTENTION_BACKENDS: "${SOL_COMPONENT_ATTENTION_BACKENDS:-text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn}"',
+                '      QUANTIZATION: "${SOL_QUANTIZATION:-fp8}"',
+                '      LORA_MERGE_MODE: "${SOL_LORA_MERGE_MODE:-dynamic}"',
+                '      SGLANG_CACHE_DIT_ENABLED: "${SOL_CACHE_DIT_ENABLED:-true}"',
+                '      SGLANG_CACHE_DIT_FN: "${SOL_CACHE_DIT_FN:-1}"',
+                '      SGLANG_CACHE_DIT_BN: "${SOL_CACHE_DIT_BN:-0}"',
+                '      SGLANG_CACHE_DIT_WARMUP: "${SOL_CACHE_DIT_WARMUP:-2}"',
+                '      SGLANG_CACHE_DIT_RDT: "${SOL_CACHE_DIT_RDT:-0.04}"',
+                '      SGLANG_CACHE_DIT_MC: "${SOL_CACHE_DIT_MC:-1}"',
             ]
         )
     service.extend(
@@ -254,8 +274,7 @@ def build_config(
     base_port: int,
     cpu_per_group: int,
     memory_per_group_mb: int,
-    sol_ab_enabled: bool = False,
-    sol_ab_slot: int = 1,
+    optimization_stack_enabled: bool = False,
 ) -> list[dict[str, Any]]:
     instances = []
     for group_index, group in enumerate(groups):
@@ -273,9 +292,12 @@ def build_config(
                 "cpu": cpu_per_group,
                 "memory_mb": memory_per_group_mb,
                 "attention_profile": (
-                    "sol_attn"
-                    if sol_ab_enabled and group_index == sol_ab_slot
-                    else "sage_attn"
+                    "sol_attn" if optimization_stack_enabled else "sage_attn"
+                ),
+                "optimization_profile": (
+                    "sol_attn_fp8_cache_dit"
+                    if optimization_stack_enabled
+                    else "sage_attn_bf16"
                 ),
             }
         )
@@ -293,8 +315,12 @@ def main() -> None:
     parser.add_argument("--release-id", required=True)
     parser.add_argument("--sglang-image", default=os.getenv("SGLANG_IMAGE", ""))
     parser.add_argument("--sglang-sol-image", default=os.getenv("SGLANG_SOL_IMAGE", ""))
-    parser.add_argument("--sol-ab-enabled", action="store_true")
-    parser.add_argument("--sol-ab-slot", type=int, default=1)
+    parser.add_argument(
+        "--optimization-stack-enabled",
+        "--sol-ab-enabled",
+        dest="optimization_stack_enabled",
+        action="store_true",
+    )
     parser.add_argument(
         "--sol-component-attention-backends",
         default=os.getenv(
@@ -322,18 +348,10 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     gpus = detect_gpus()
     groups = partition_gpus(gpus, allow_non_h200=args.allow_non_h200)
-    if args.sol_ab_enabled:
-        if len(groups) < 2:
-            raise SystemExit("Sol-Attn A/B requires at least two 4-GPU groups")
-        if args.sol_ab_slot <= 0 or args.sol_ab_slot >= len(groups):
-            raise SystemExit(
-                "Sol-Attn A/B slot must be a non-zero existing group; "
-                f"got {args.sol_ab_slot} for {len(groups)} groups"
-            )
-        if not args.sglang_sol_image:
-            raise SystemExit(
-                "--sglang-sol-image is required when Sol-Attn A/B is enabled"
-            )
+    if args.optimization_stack_enabled and not args.sglang_sol_image:
+        raise SystemExit(
+            "--sglang-sol-image is required when the optimization stack is enabled"
+        )
     cpu_per_group, memory_per_group_mb = detect_host_resources(len(groups))
 
     compose = ["name: minimax-h3-4h200", "", "services:"]
@@ -344,7 +362,7 @@ def main() -> None:
                 group,
                 args.data_root,
                 args.model_cache_root,
-                sol_enabled=(args.sol_ab_enabled and group_index == args.sol_ab_slot),
+                sol_enabled=args.optimization_stack_enabled,
             )
         )
         compose.append("")
@@ -355,7 +373,7 @@ def main() -> None:
                 args.data_root,
                 args.advertise_host,
                 args.base_port,
-                sol_enabled=(args.sol_ab_enabled and group_index == args.sol_ab_slot),
+                sol_enabled=args.optimization_stack_enabled,
             )
         )
         compose.append("")
@@ -399,8 +417,7 @@ def main() -> None:
         args.base_port,
         cpu_per_group,
         memory_per_group_mb,
-        sol_ab_enabled=args.sol_ab_enabled,
-        sol_ab_slot=args.sol_ab_slot,
+        optimization_stack_enabled=args.optimization_stack_enabled,
     )
     model_lock = json.loads((repo_root / "config/models.lock.json").read_text())
     reporter_config = {
@@ -414,12 +431,21 @@ def main() -> None:
         "deployment": {
             "release_id": args.release_id,
             "sglang_image": args.sglang_image,
-            "sol_ab": {
-                "enabled": args.sol_ab_enabled,
-                "slot": args.sol_ab_slot,
+            "optimization_stack": {
+                "enabled": args.optimization_stack_enabled,
                 "sglang_image": args.sglang_sol_image,
                 "component_attention_backends": args.sol_component_attention_backends,
                 "attention_backend_config": args.sol_attention_backend_config,
+                "quantization": os.getenv("SOL_QUANTIZATION", "fp8"),
+                "lora_merge_mode": os.getenv("SOL_LORA_MERGE_MODE", "dynamic"),
+                "cache_dit": {
+                    "enabled": os.getenv("SOL_CACHE_DIT_ENABLED", "true"),
+                    "fn": os.getenv("SOL_CACHE_DIT_FN", "1"),
+                    "bn": os.getenv("SOL_CACHE_DIT_BN", "0"),
+                    "warmup": os.getenv("SOL_CACHE_DIT_WARMUP", "2"),
+                    "rdt": os.getenv("SOL_CACHE_DIT_RDT", "0.04"),
+                    "mc": os.getenv("SOL_CACHE_DIT_MC", "1"),
+                },
             },
             "api_image": args.api_image,
             "model": model_lock,

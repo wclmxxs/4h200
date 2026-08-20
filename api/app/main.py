@@ -35,6 +35,21 @@ ATTENTION_BACKEND = os.getenv("ATTENTION_BACKEND", "fa")
 COMPONENT_ATTENTION_BACKENDS = os.getenv(
     "COMPONENT_ATTENTION_BACKENDS", "transformer=sage_attn"
 )
+QUANTIZATION = os.getenv("QUANTIZATION", "")
+LORA_MERGE_MODE = os.getenv("LORA_MERGE_MODE", "auto")
+CACHE_DIT_ENABLED = os.getenv("SGLANG_CACHE_DIT_ENABLED", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+CACHE_DIT_CONFIG = {
+    "fn": int(os.getenv("SGLANG_CACHE_DIT_FN", "1")),
+    "bn": int(os.getenv("SGLANG_CACHE_DIT_BN", "0")),
+    "warmup": int(os.getenv("SGLANG_CACHE_DIT_WARMUP", "4")),
+    "rdt": float(os.getenv("SGLANG_CACHE_DIT_RDT", "0.24")),
+    "mc": int(os.getenv("SGLANG_CACHE_DIT_MC", "3")),
+}
 UPSTREAM_TIMEOUT_SECONDS = float(os.getenv("UPSTREAM_TIMEOUT_SECONDS", "60"))
 TASK_ID_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,200}")
 SEED_UPPER_BOUND = 1 << 63
@@ -290,6 +305,10 @@ async def healthz(_: None = Depends(require_api_key)) -> dict[str, Any]:
             "lora_scale": LORA_SCALE,
             "attention_backend": ATTENTION_BACKEND,
             "component_attention_backends": COMPONENT_ATTENTION_BACKENDS,
+            "quantization": QUANTIZATION or None,
+            "lora_merge_mode": LORA_MERGE_MODE,
+            "cache_dit_enabled": CACHE_DIT_ENABLED,
+            "cache_dit_config": CACHE_DIT_CONFIG if CACHE_DIT_ENABLED else None,
         },
     }
 

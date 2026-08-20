@@ -15,7 +15,7 @@
 
 - SGLang `fl2va` variant，同时支持 T2V、首帧、尾帧和首尾帧生成。
 - 静态加载 `larryvrh/MiniMax-H3-Turbo-Lora` 当前 v4 权重。
-- 主去噪 `transformer` 默认启用 SageAttention，并固定包含 Hopper/SM90 修复的 upstream revision；Audio/Video VAE 等其他组件保持兼容的 FlashAttention。
+- 所有推理分区的主去噪 `transformer` 默认叠加 Sol-Attn、在线 FP8 和 Cache-DiT；Turbo LoRA 以动态模式应用，Audio/Video VAE 等其他组件保持兼容的 FlashAttention。
 - 业务侧 NFE 支持 `4/6/8`，默认 `6`；转发给 SGLang 时分别是 `5/7/9` 个 sigma grid points。
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
@@ -64,37 +64,35 @@ cd 4h200
 ./stop.sh              # 先上报 unhealthy，再停止 reporter；缓存和输出保留
 ```
 
-### Sol-Attn 稀疏注意力 A/B
+### Sol-Attn + FP8 + Cache-DiT 组合优化
 
-8 卡机器可以让两组 4×H200 同时保留不同的 attention 路径：
+默认给每个 4×H200 分区使用同一套优化配置。8 卡机器的两个服务如下：
 
 | 端口 | GPU | 配置 |
 | --- | --- | --- |
-| `30010` | `0,1,2,3` | 原有 SageAttention 基线，不重启 |
-| `30011` | `4,5,6,7` | 主 DiT 使用 Sol-Attn；Audio/Video VAE 保持 FA；前 2 个去噪 step 使用 Sage dense，后续 step 使用稀疏 attention |
+| `30010` | `0,1,2,3` | Sol-Attn + 在线 FP8 + Cache-DiT + 动态 LoRA |
+| `30011` | `4,5,6,7` | Sol-Attn + 在线 FP8 + Cache-DiT + 动态 LoRA |
 
-启用只需要：
+部署或更新只需要：
 
 ```bash
 git pull --ff-only
-./enable_sol_ab.sh
+./install.sh
 ```
 
-第一次会基于现有 SGLang/Sage 镜像构建一个独立 Sol-Attn overlay，然后只重建 GPU 4–7 的 worker 和对应的轻量 API 容器。全局基础后端保持 FA，避免 Audio/Video VAE 继承不兼容的 Sol；只有主 transformer 通过组件约束切到 Sol。脚本会等待 warmup 完成，并校验 Sol 包、实际镜像、运行参数及组件级启动日志；GPU 0–3 的基线服务及其显存不会被触碰。当前业务默认 6 NFE，因此默认 `dense_steps=2`，剩余 4 step 才真正进入稀疏路径。Sol 分区使用 `warmup_steps=3`，确保默认 warmup shape 至少执行一次稀疏 kernel。Sol 的 SM90 kernel 会按 token shape 专门化；15 秒等不同时间长度的 shape 第一次请求仍可能包含 JIT，稳态测速应对相同参数连续运行两次并取第二次。
+安装器会基于 SGLang/Sage 镜像构建独立的 Sol-Attn overlay，并让所有完整的 4 卡分区使用它。全局基础后端设为 Sol，但 `text_encoder`、`audio_vae`、`video_vae` 被显式隔离到兼容后端，只有主 transformer 使用 Sol。每个服务同时传入 `--quantization fp8`，并使用动态 LoRA，避免把 LoRA 增量直接写入量化后的 FP8 基模权重。Cache-DiT 默认参数为 `Fn=1/Bn=0/W=2/R=0.04/MC=1`，针对当前少步数 Turbo LoRA 保守地限制连续缓存。
 
-回滚也只重启 GPU 4–7：
+安装脚本会等待全部分区 warmup 完成，然后逐个严格校验 Sol/Cache-DiT/FP8 模块、容器环境、实际 SGLang 进程参数及主 DiT 的 Sol 启动日志；任何一个分区没有真正生效都会退出。当前业务默认 6 NFE，Sol 默认 `dense_steps=2`，后续 step 才进入稀疏路径；Sol 的 SM90 kernel 会按 token shape 专门化，15 秒等不同时间长度的 shape 第一次请求仍可能包含 JIT，稳态测速应对相同参数连续运行两次并取第二次。
+
+三项优化都会改变数值路径，组合收益不保证相加。Cache-DiT 只会在第一条真实生成请求开始时挂载，因此启动阶段只验证配置和依赖，实际命中需要查看首条生成后的 worker 日志。
+
+需要整机回退到 Sage/BF16 时执行：
 
 ```bash
 ./disable_sol_ab.sh
 ```
 
-两组端口仍会照常注册到 `Minimax-H3-AWS-H200`。做严格串行测速时请直接请求 `30010` 和 `30011`，并确保网关没有同时向这台测试机派发任务。首次验证建议对相同 seed、prompt、时长和分辨率分别比较服务端推理耗时与画面质量；Sol-Attn 的收益主要出现在较长视频，4 秒视频可能被固定开销抵消。
-
-需要重建相同 tag 的 Sol 镜像时：
-
-```bash
-FORCE_BUILD_SOL=1 ./enable_sol_ab.sh
-```
+所有端口仍会照常注册到 `Minimax-H3-AWS-H200`。做严格串行测速时请直接请求一个端口，并确保网关没有同时向这台测试机派发任务。首次验证建议使用显式 seed，记录服务端推理耗时并检查画面和音频；Sol-Attn 的收益主要出现在较长视频，4 秒视频可能被固定开销抵消。
 
 查看单个分区日志：
 
@@ -227,12 +225,17 @@ Content-Type: application/json
 | `WARMUP` | `864x480 1248x704 1344x768` | SGLang 启动预热规格 |
 | `ATTENTION_BACKEND` | `fa` | 所有组件的安全基础后端，避免 Audio/Video VAE 使用不支持的 SageAttention |
 | `COMPONENT_ATTENTION_BACKENDS` | `transformer=sage_attn` | 只把主去噪 transformer 切到 SageAttention |
-| `SOL_AB_ENABLED` | `0` | 是否在完整安装时启用分区级 Sol-Attn A/B；一键脚本会自动维护 |
-| `SOL_AB_SLOT` | `1` | Sol 实验占用的 4 卡分区；禁止使用 slot 0，以保留稳定基线 |
+| `OPTIMIZATION_STACK_ENABLED` | `1` | 是否给全部 4 卡分区启用 Sol-Attn + FP8 + Cache-DiT |
 | `SOL_COMPONENT_ATTENTION_BACKENDS` | `text_encoder=torch_sdpa,audio_vae=fa,video_vae=fa,transformer=sol_attn` | H3 DiT 使用 Sol；显式保护文本编码器及 Audio/Video VAE，避免它们误用 Sol |
 | `SOL_ATTENTION_BACKEND_CONFIG` | `dense_backend=sage_attn,dense_steps=2,kv_splits=auto,tau=1.0` | Sol 稀疏配置；6 NFE 下前 2 step 保持 dense |
-| `SOL_ATTN_STRICT` | `1` | 实验分区禁止 Sol kernel 异常时静默回退为 dense，避免产生虚假测速结果 |
+| `SOL_ATTN_STRICT` | `1` | 禁止 Sol kernel 异常时静默回退为 dense，避免产生虚假测速结果 |
 | `SOL_WARMUP_STEPS` | `3` | 启动时执行 3 个 warmup step，覆盖 `dense_steps=2` 后的首个稀疏 step |
+| `SOL_QUANTIZATION` | `fp8` | 全部推理分区在线量化主 transformer |
+| `SOL_LORA_MERGE_MODE` | `dynamic` | 动态应用 Turbo LoRA，不修改量化基模权重 |
+| `SOL_CACHE_DIT_ENABLED` | `true` | 全部推理分区进程级启用 Cache-DiT |
+| `SOL_CACHE_DIT_WARMUP` | `2` | 前 2 个去噪 step 完整计算 |
+| `SOL_CACHE_DIT_RDT` | `0.04` | 残差差异缓存阈值 |
+| `SOL_CACHE_DIT_MC` | `1` | 最多连续缓存 1 个 step |
 | `REMOTE_MEDIA_HOST_ALLOWLIST` | `.byted.org` | 可访问的私网图片域名后缀；公网域名自动允许 |
 | `VIDEO_RETENTION_HOURS` | `12` | 视频和对应任务元数据保留时间 |
 | `CLEANUP_INTERVAL_SECONDS` | `600` | 清理任务执行间隔；实际删除可能比 12 小时最多晚约 10 分钟 |
@@ -244,7 +247,7 @@ Content-Type: application/json
 
 如果 SGLang 上游代码结构变化，构建阶段会因短边补丁不匹配而失败，不会静默启动一个只支持 768 的服务。
 
-MiniMax H3 的 DiT attention backend 在第一次 forward 时延迟解析。Sol 实验分区因此使用全局 `sol_attn`，同时将 `text_encoder`、`audio_vae`、`video_vae` 显式覆盖为兼容后端；启动脚本会同时检查 DiT 实际解析为 Sol 和 Audio VAE 保持 FA，任一不满足都会退出，避免把未生效的实验误当作 Sol 测速。
+MiniMax H3 的 DiT attention backend 在第一次 forward 时延迟解析。优化分区因此使用全局 `sol_attn`，同时将 `text_encoder`、`audio_vae`、`video_vae` 显式覆盖为兼容后端；启动脚本会同时检查 DiT 实际解析为 Sol 和 Audio VAE 保持 FA，任一不满足都会退出。
 
 SageAttention 会改变 transformer 的 attention 数值路径。需要让所有组件回退到 FlashAttention 时清空组件覆盖后重新执行安装：
 
