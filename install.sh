@@ -139,6 +139,7 @@ sudo chown -R "$(id -u):$(id -g)" "${DATA_ROOT}"
 MODEL_VENV_DIR=".state/model-venv"
 MODEL_VENV_PYTHON="${MODEL_VENV_DIR}/bin/python"
 MODEL_VENV_PIP="${MODEL_VENV_DIR}/bin/pip"
+MODEL_REQUIREMENTS="model-requirements.txt"
 
 if [[ ! -x ${MODEL_VENV_PYTHON} ]]; then
   python3 -m venv "${MODEL_VENV_DIR}"
@@ -156,7 +157,7 @@ sys.exit(0)
 PY
 then
   "${MODEL_VENV_PYTHON}" -m pip install --upgrade pip
-  "${MODEL_VENV_PYTHON}" -m pip install 'huggingface_hub>=0.34,<2' 'hf_xet>=1.1,<2'
+  "${MODEL_VENV_PYTHON}" -m pip install -r "${MODEL_REQUIREMENTS}"
 fi
 
 lora_local_path=$(
