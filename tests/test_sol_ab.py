@@ -11,6 +11,16 @@ def test_sol_overlay_is_pinned_on_top_of_the_sage_capable_image():
     assert "import sol_attn" in dockerfile
 
 
+def test_sglang_base_image_is_pinned_to_patch_commit():
+    dockerfile = (ROOT / "docker/Dockerfile.sglang").read_text()
+    env = (ROOT / "config/env.example").read_text()
+
+    assert "nightly-dev-20260812-c7c03ec5@sha256:d7538b2" in dockerfile
+    assert "SGLANG_EXPECTED_COMMIT=c7c03ec53b" in dockerfile
+    assert 'git rev-parse --short=10 HEAD' in dockerfile
+    assert "SGLANG_BASE_IMAGE=lmsysorg/sglang:dev" not in env
+
+
 def test_optimization_toggle_reinstalls_every_partition():
     script = (ROOT / "scripts/configure_sol_ab.sh").read_text()
     assert "set_env OPTIMIZATION_STACK_ENABLED 1" in script
@@ -49,6 +59,9 @@ def test_install_migrates_the_previous_balanced_defaults():
     ) in script
     assert "migrate_env_default SOL_CACHE_DIT_RDT 0.08 0.12" in script
     assert "migrate_env_default SOL_CACHE_DIT_MC 2 3" in script
+    assert 'sglang_build_base_image} == "lmsysorg/sglang:dev"' in script
+    assert "build_gpu_image docker/Dockerfile.sglang" in script
+    assert "REBUILD_GPU_IMAGES=1 to rebuild" in script
 
 
 def test_sol_toggle_wrappers_are_one_command_entrypoints():

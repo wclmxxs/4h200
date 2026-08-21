@@ -16,6 +16,7 @@
 - SGLang `fl2va` variant，同时支持 T2V、首帧、尾帧和首尾帧生成。
 - 静态加载 `larryvrh/MiniMax-H3-Turbo-Lora` 当前 v4 权重。
 - 所有推理分区的主去噪 `transformer` 默认叠加 Sol-Attn、在线 FP8 和 Cache-DiT；Turbo LoRA 以动态模式应用，Audio/Video VAE 等其他组件保持兼容的 FlashAttention。
+- SGLang 基础镜像固定到与短边补丁匹配的 `c7c03ec53b` 构建和 OCI digest，不使用会漂移的 `:dev`；已有 GPU 镜像默认复用。
 - 业务侧 NFE 支持 `4/6/8`，默认 `6`；转发给 SGLang 时分别是 `5/7/9` 个 sigma grid points。
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
@@ -221,6 +222,8 @@ Content-Type: application/json
 | `SERVICE_ID` | `Minimax-H3-AWS-H200` | install 会强校验，防止注册到错误池子 |
 | `API_BASE_PORT` | `30010` | 第 N 个 4 卡分区使用 `base+N` |
 | `MODEL` | `MiniMaxAI/MiniMax-H3` | 基模；部署命令始终显式传入 |
+| `SGLANG_BASE_IMAGE` | `nightly-dev-20260812-c7c03ec5@sha256:d753…` | 与短边补丁匹配并锁定 digest 的 SGLang 基础镜像 |
+| `REBUILD_GPU_IMAGES` | `0` | 已存在 GPU 镜像时复用；仅修改 GPU Dockerfile/补丁时显式设为 `1` |
 | `LORA_REPO` | `larryvrh/MiniMax-H3-Turbo-Lora` | 静态 LoRA 仓库 |
 | `LORA_REVISION` | `43a7455…` | 已验证的当前 LoRA commit |
 | `LORA_WEIGHT` | `minimax_h3_turbo_v4_step600_ema.safetensors` | 当前 LoRA 文件 |
@@ -250,7 +253,6 @@ Content-Type: application/json
 | `MODEL_CACHE_ROOT` | 空（解析为 `${DATA_ROOT}/hf-cache`） | Hugging Face 基模和 LoRA 缓存；AMI 复用时应指向 EBS |
 | `STARTUP_TIMEOUT_SECONDS` | `1800` | 每个 SGLang 分区等待加载和 warmup 的最长秒数 |
 | `STARTUP_PROGRESS_SECONDS` | `15` | 等待模型加载和 warmup 时输出一次进度的间隔 |
-| `SGLANG_BASE_IMAGE` | `lmsysorg/sglang:dev` | 建议验证后换成 digest 固定的镜像引用 |
 
 如果 SGLang 上游代码结构变化，构建阶段会因短边补丁不匹配而失败，不会静默启动一个只支持 768 的服务。
 

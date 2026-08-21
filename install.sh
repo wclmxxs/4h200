@@ -223,6 +223,12 @@ set +a
 
 MODEL_CACHE_ROOT=${MODEL_CACHE_ROOT:-${DATA_ROOT}/hf-cache}
 export MODEL_CACHE_ROOT
+validated_sglang_base_image='lmsysorg/sglang:nightly-dev-20260812-c7c03ec5@sha256:d7538b2bae8aff4b00b826442f7abd69d45ded936bc16fd0a493a2466df52050'
+sglang_build_base_image=${SGLANG_BASE_IMAGE}
+if [[ ${sglang_build_base_image} == "lmsysorg/sglang:dev" ]]; then
+  sglang_build_base_image=${validated_sglang_base_image}
+  echo "Replacing mutable SGLANG_BASE_IMAGE=:dev with validated c7c03ec53b image"
+fi
 
 if [[ ${SERVICE_ID} != "Minimax-H3-AWS-H200" ]]; then
   echo "SERVICE_ID must be Minimax-H3-AWS-H200; got ${SERVICE_ID}" >&2
@@ -340,11 +346,22 @@ build_image() {
   "${docker_cmd[@]}" build --progress=plain "$@" \
     -f "${dockerfile}" -t "${image}" .
 }
-build_image docker/Dockerfile.sglang "${SGLANG_IMAGE}" \
-  --build-arg "SGLANG_BASE_IMAGE=${SGLANG_BASE_IMAGE}" \
+build_gpu_image() {
+  local dockerfile=$1 image=$2
+  shift 2
+  if [[ ${REBUILD_GPU_IMAGES:-0} != "1" ]] \
+    && "${docker_cmd[@]}" image inspect "${image}" >/dev/null 2>&1; then
+    echo "Reusing GPU image ${image}; set REBUILD_GPU_IMAGES=1 to rebuild"
+    return
+  fi
+  build_image "${dockerfile}" "${image}" "$@"
+}
+build_gpu_image docker/Dockerfile.sglang "${SGLANG_IMAGE}" \
+  --build-arg "SGLANG_BASE_IMAGE=${sglang_build_base_image}" \
+  --build-arg "SGLANG_EXPECTED_COMMIT=c7c03ec53b" \
   --build-arg "SAGEATTENTION_REVISION=${SAGEATTENTION_REVISION:-d9704247a5139ab4c03bf7fc6b35cc0e2cbb5ea4}"
 if [[ ${OPTIMIZATION_STACK_ENABLED:-1} == "1" ]]; then
-  build_image docker/Dockerfile.sol-attn "${SGLANG_SOL_IMAGE}" \
+  build_gpu_image docker/Dockerfile.sol-attn "${SGLANG_SOL_IMAGE}" \
     --build-arg "SGLANG_BASE_IMAGE=${SGLANG_IMAGE}" \
     --build-arg "SOL_ATTENTION_REVISION=${SOL_ATTENTION_REVISION}"
 fi
