@@ -255,13 +255,28 @@ def task_payload(job: dict[str, Any]) -> dict[str, Any]:
     created_at = int(
         job.get("created_at") or deployment.get("created_at") or time.time()
     )
-    updated_at = int(job.get("completed_at") or job.get("updated_at") or created_at)
+    status_changed_at = (deployment.get("_watchdog") or {}).get("status_changed_at")
+    updated_at = max(
+        int(value)
+        for value in (
+            created_at,
+            status_changed_at,
+            job.get("updated_at"),
+            job.get("completed_at"),
+        )
+        if value is not None
+    )
     task: dict[str, Any] = {
         "id": job["id"],
         "model": BUSINESS_MODEL,
         "status": status,
         "created_at": created_at,
         "updated_at": updated_at,
+        "inference_time_s": (
+            round(float(job["inference_time_s"]), 3)
+            if job.get("inference_time_s") is not None
+            else None
+        ),
         "resolution": business.get("resolution", "768P"),
         "duration": business.get("duration", 5),
         "ratio": business.get("ratio", "16:9"),

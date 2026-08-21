@@ -56,6 +56,7 @@ SEED_UPPER_BOUND = 1 << 63
 TERMINAL_JOB_STATUSES = frozenset(
     {"completed", "succeeded", "failed", "deleted", "cancelled"}
 )
+ACTIVE_JOB_STATUSES = frozenset({"queued", "in_progress", "running"})
 JOB_STATUS_RANK = {
     "unknown": 0,
     "queued": 1,
@@ -129,6 +130,56 @@ def record_job_status(
     return current
 
 
+def oldest_active_job_id() -> str | None:
+    """Return the head of this single-flight worker's locally persisted queue."""
+    candidates: list[tuple[int, int, str]] = []
+    if not JOB_ROOT.is_dir():
+        return None
+    for path in JOB_ROOT.glob("*.json"):
+        try:
+            metadata = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        status = str((metadata.get("_watchdog") or {}).get("status") or "unknown")
+        if status not in ACTIVE_JOB_STATUSES:
+            continue
+        task_id = str(metadata.get("id") or path.stem)
+        if not TASK_ID_PATTERN.fullmatch(task_id):
+            continue
+        created_at = int(metadata.get("created_at") or 0)
+        submitted_at_ns = int(metadata.get("submitted_at_ns") or created_at * 10**9)
+        candidates.append((submitted_at_ns, created_at, task_id))
+    return min(candidates, default=(0, 0, ""))[2] or None
+
+
+def effective_job_status(
+    task_id: str,
+    upstream_status: object,
+    metadata: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Expose the head of SGLang's single-flight queue as running.
+
+    MiniMax H3's async API reports the active request as ``queued`` until it is
+    terminal. Each deployed endpoint executes one request at a time, so the
+    oldest live request is the one currently owned by the worker.
+    """
+    normalized = str(upstream_status or "unknown").lower()
+    metadata = record_job_status(task_id, normalized, metadata=metadata)
+    if normalized != "queued":
+        return normalized, metadata
+
+    local_status = str(
+        (metadata.get("_watchdog") or {}).get("status") or "unknown"
+    ).lower()
+    if local_status in {"in_progress", "running"}:
+        return "running", metadata
+    if oldest_active_job_id() != task_id:
+        return "queued", metadata
+
+    metadata = record_job_status(task_id, "running", metadata=metadata)
+    return "running", metadata
+
+
 def with_resolved_seed(payload: dict[str, Any]) -> dict[str, Any]:
     resolved = dict(payload)
     if resolved.get("seed") is None:
@@ -181,6 +232,7 @@ async def submit_upstream(
     metadata = {
         "id": task_id,
         "created_at": created_at,
+        "submitted_at_ns": time.time_ns(),
         "request": payload,
         "business": business or {},
     }
@@ -207,7 +259,10 @@ async def retrieve_upstream(task_id: str) -> dict[str, Any]:
     payload = response.json()
     metadata = load_metadata(task_id) or {}
     if metadata:
-        metadata = record_job_status(task_id, payload.get("status"), metadata=metadata)
+        status, metadata = effective_job_status(
+            task_id, payload.get("status"), metadata=metadata
+        )
+        payload["status"] = status
         payload["_deployment"] = metadata
     return payload
 

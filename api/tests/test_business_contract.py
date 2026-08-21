@@ -51,6 +51,43 @@ def test_query_returns_resolved_seed_for_reproduction():
     assert task["seed"] == 987654321
 
 
+def test_query_returns_server_inference_time():
+    task = business.task_payload(
+        {
+            "id": "video_123",
+            "status": "completed",
+            "created_at": 100,
+            "completed_at": 130,
+            "inference_time_s": 27.4567,
+            "_deployment": {},
+        }
+    )
+
+    assert task["inference_time_s"] == 27.457
+
+
+def test_running_status_uses_local_transition_time():
+    task = business.task_payload(
+        {
+            "id": "video_123",
+            "status": "running",
+            "created_at": 100,
+            "updated_at": 100,
+            "_deployment": {
+                "_watchdog": {
+                    "status": "running",
+                    "status_changed_at": 120,
+                    "terminal": False,
+                }
+            },
+        }
+    )
+
+    assert task["status"] == "running"
+    assert task["updated_at"] == 120
+    assert task["inference_time_s"] is None
+
+
 def test_fl2va_preserves_first_and_last_frame_order():
     value = request(
         content=[
