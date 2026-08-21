@@ -38,11 +38,22 @@ for ((slot=0; slot<service_count; slot++)); do
   deadline=$((SECONDS + 180))
   api_healthy=false
   while (( SECONDS < deadline )); do
-    if curl -fsS --max-time 10 \
+    ipv4_healthy=false
+    ipv6_healthy=false
+    if curl --noproxy '*' -fsS --max-time 10 \
       -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${port}/healthz" 2>/dev/null \
       | jq -e '.ok == true' >/dev/null 2>&1; then
-      echo "API partition ${slot} is healthy on port ${port}"
+      ipv4_healthy=true
+    fi
+    if curl --noproxy '*' -g -6 -fsS --max-time 10 \
+      -H "Authorization: Bearer ${API_KEY}" \
+      "http://[::1]:${port}/healthz" 2>/dev/null \
+      | jq -e '.ok == true' >/dev/null 2>&1; then
+      ipv6_healthy=true
+    fi
+    if [[ ${ipv4_healthy} == true && ${ipv6_healthy} == true ]]; then
+      echo "API partition ${slot} is healthy on IPv4+IPv6 port ${port}"
       api_healthy=true
       break
     fi
@@ -64,4 +75,4 @@ for service in "${api_services[@]}"; do
   }
 done
 
-echo "READY: API keep-alive is 120 seconds; GPU workers were not restarted"
+echo "READY: API is dual-stack with 120-second keep-alive; GPU workers were not restarted"

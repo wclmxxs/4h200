@@ -20,6 +20,7 @@
 - 业务分辨率支持 `704P` 和 `768P`。镜像内包含独立的非 768 短边补丁。
 - 当前明确不部署 `ref2va`；收到 reference image/video/audio 会返回 400。
 - 每个 4 卡分区独立排队、独立故障、独立端口和独立注册健康状态；启动时所有完整分区并行加载和预热。
+- 每个对外 API 端口同时发布到主机的 `0.0.0.0` 和 `[::]`；安装器会分别通过 IPv4 loopback 和 IPv6 loopback 探活后才注册服务。
 - PyTorch CUDA allocator 默认启用 `expandable_segments`，降低长短视频交替请求造成的显存碎片。
 - 独立 Watchdog 逐分区观察任务状态和 worker 日志：存在活跃任务但连续 5 分钟没有处理进展，或出现致命 CUDA OOM 时，只重启对应的 4 卡 worker；重启期间 Reporter 会自动把该端点上报为 unhealthy。
 - 图片 URL 默认只允许公网解析地址或 `.byted.org`，避免推理容器访问云元数据和内网地址。
@@ -53,7 +54,7 @@ cd 4h200
 
 默认不需要编辑配置。只有非标准环境才需要先运行 `cp config/env.example .env` 再修改，例如无法访问 AWS IMDS、需要 Hugging Face Token，或需要更换数据盘目录。
 
-`ADVERTISE_HOST` 不接受私网 IP、域名或回退地址。每次安装都会优先查询 AWS IMDSv2 的 `public-ipv4` 和 `instance-id` 并覆盖 AMI 中遗留的旧值；IMDS 不可用时才使用 `.env` 的手工配置。公网 IP 同时用于 ReportCatalog 的 `host` 和成功任务的下载 URL。普通安装按固定 revision 下载 Turbo LoRA 并校验 SHA256；AMI 快速模式只对镜像中已经存在、大小匹配的 LoRA 跳过哈希。
+`ADVERTISE_HOST` 不接受私网 IP、域名或回退地址。每次安装都会优先查询 AWS IMDSv2 的 `public-ipv4` 和 `instance-id` 并覆盖 AMI 中遗留的旧值；IMDS 不可用时才使用 `.env` 的手工配置。公网 IPv4 继续用于 ReportCatalog 的 `host` 和成功任务的下载 URL；同一 API 端口也会监听主机所有 IPv6 地址。若要从公网 IPv6 访问，还需要 EC2 实例自身分配公网 IPv6，并在安全组中放行对应端口。普通安装按固定 revision 下载 Turbo LoRA 并校验 SHA256；AMI 快速模式只对镜像中已经存在、大小匹配的 LoRA 跳过哈希。
 
 默认模型缓存位于 `${DATA_ROOT}/hf-cache`。默认 `DATA_ROOT=/opt/dlami/nvme/minimax-h3-4h200` 通常属于 EC2 instance-store，不会被标准 AMI 保存。要让克隆实例真正复用基模，制作 AMI 前应把 `MODEL_CACHE_ROOT` 指向快照支持的 EBS 文件系统；快速模式检测到临时 NVMe 时会明确告警，缓存缺失时 SGLang 仍会自动重新下载模型。
 

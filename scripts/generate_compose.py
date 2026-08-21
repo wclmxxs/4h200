@@ -229,7 +229,8 @@ def api_service(
         f"      h3-sglang-{group_index}:",
         "        condition: service_healthy",
         "    ports:",
-        f"      - '0.0.0.0:{port}:30010'",
+        # Without HOST_IP Docker publishes on both 0.0.0.0 and [::].
+        f"      - '{port}:30010'",
         "    environment:",
         f"      SGLANG_URL: http://h3-sglang-{group_index}:30020",
         "      DATA_ROOT: /data",

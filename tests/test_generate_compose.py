@@ -88,7 +88,7 @@ def test_main_renders_two_registered_services(monkeypatch, tmp_path):
         "reservations"
     ]["devices"]
     assert reservations[0]["device_ids"] == ["4", "5", "6", "7"]
-    assert compose["services"]["h3-api-1"]["ports"] == ["0.0.0.0:30011:30010"]
+    assert compose["services"]["h3-api-1"]["ports"] == ["30011:30010"]
     assert compose["services"]["h3-sglang-0"]["image"] == "${SGLANG_IMAGE}"
     assert compose["services"]["h3-sglang-1"]["image"] == "${SGLANG_IMAGE}"
     assert [item["attention_profile"] for item in config["instances"]] == [

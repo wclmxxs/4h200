@@ -82,6 +82,9 @@ def test_install_has_safe_ami_fast_path_and_parallel_workers():
     assert 'worker_services+=("h3-sglang-${slot}")' in install
     assert 'up -d "${worker_services[@]}"' in install
     assert "Waiting for partition ${slot}" in install
+    assert 'http://127.0.0.1:${port}/healthz' in install
+    assert 'http://[::1]:${port}/healthz' in install
+    assert "IPv4+IPv6" in install
     assert "Waiting for queue watchdog" in install
     assert "WATCHDOG_STARTUP_TIMEOUT_SECONDS" in install
     assert 'verify_sol_stack.sh "minimax-h3-h200-sglang-${slot}"' in install
@@ -105,3 +108,5 @@ def test_api_update_does_not_restart_gpu_workers():
     assert '"${api_services[@]}"' in script
     assert "h3-sglang" not in script
     assert "--timeout-keep-alive" in script
+    assert 'http://[::1]:${port}/healthz' in script
+    assert "dual-stack" in script

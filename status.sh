@@ -27,10 +27,17 @@ nvidia-smi --query-gpu=index,uuid,name,memory.used,memory.total,utilization.gpu 
 echo "=== 4-H200 partitions ==="
 for ((slot=0; slot<service_count; slot++)); do
   port=$((API_BASE_PORT + slot))
-  printf 'slot=%d port=%d ' "${slot}" "${port}"
-  if ! curl -fsS --max-time 10 \
+  printf 'slot=%d port=%d family=ipv4 ' "${slot}" "${port}"
+  if ! curl --noproxy '*' -fsS --max-time 10 \
       -H "Authorization: Bearer ${API_KEY}" \
       "http://127.0.0.1:${port}/healthz" |
+      jq -c '{ok,healthy_workers,gpu_indexes,gpu_uuids,deployment}'; then
+    echo '{"ok":false,"error":"health request failed"}'
+  fi
+  printf 'slot=%d port=%d family=ipv6 ' "${slot}" "${port}"
+  if ! curl --noproxy '*' -g -6 -fsS --max-time 10 \
+      -H "Authorization: Bearer ${API_KEY}" \
+      "http://[::1]:${port}/healthz" |
       jq -c '{ok,healthy_workers,gpu_indexes,gpu_uuids,deployment}'; then
     echo '{"ok":false,"error":"health request failed"}'
   fi

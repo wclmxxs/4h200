@@ -419,15 +419,26 @@ wait_for_api() {
   local port=$((API_BASE_PORT + slot))
   local deadline=$((SECONDS + 180))
   local next_report=$SECONDS
+  local ipv4_healthy ipv6_healthy
   while (( SECONDS < deadline )); do
-    if curl -fsS "http://127.0.0.1:${port}/healthz" \
+    ipv4_healthy=false
+    ipv6_healthy=false
+    if curl --noproxy '*' -fsS "http://127.0.0.1:${port}/healthz" \
       -H "Authorization: Bearer ${API_KEY}" \
       | jq -e '.ok == true' >/dev/null 2>&1; then
-      echo "API partition ${slot} is healthy on port ${port}"
+      ipv4_healthy=true
+    fi
+    if curl --noproxy '*' -g -6 -fsS "http://[::1]:${port}/healthz" \
+      -H "Authorization: Bearer ${API_KEY}" \
+      | jq -e '.ok == true' >/dev/null 2>&1; then
+      ipv6_healthy=true
+    fi
+    if [[ ${ipv4_healthy} == true && ${ipv6_healthy} == true ]]; then
+      echo "API partition ${slot} is healthy on IPv4+IPv6 port ${port}"
       return 0
     fi
     if (( SECONDS >= next_report )); then
-      echo "Waiting for API partition ${slot} on port ${port}..."
+      echo "Waiting for API partition ${slot} on port ${port}: IPv4=${ipv4_healthy} IPv6=${ipv6_healthy}..."
       next_report=$((SECONDS + progress_interval))
     fi
     sleep 3
